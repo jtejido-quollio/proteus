@@ -1,0 +1,7 @@
+{
+  "alg": "ed25519",
+  "kid": "tenant-key-001",
+  "public_key_base64": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=",
+  "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "tenant_id": "c6d1fcb6-2e5c-4d80-9e61-1ac7c0e8f2d1"
+}

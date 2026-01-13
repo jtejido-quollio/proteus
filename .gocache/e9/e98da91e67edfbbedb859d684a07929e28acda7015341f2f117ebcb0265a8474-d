@@ -1,0 +1,5 @@
+./bundle.go
+./hash.go
+./receipt_digest.go
+./bundle_test.go
+./receipt_digest_test.go

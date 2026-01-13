@@ -1,0 +1,5 @@
+./ecr.go
+./kms.go
+./signing_v4.go
+./signing_v4a.go
+./util.go

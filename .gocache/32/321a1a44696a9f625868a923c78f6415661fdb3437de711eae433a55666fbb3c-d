@@ -1,0 +1,4 @@
+./errors.go
+./plugins.go
+./rego.go
+./resultset.go

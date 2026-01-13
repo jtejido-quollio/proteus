@@ -1,0 +1,3 @@
+./parser.go
+./query.go
+./schema.go

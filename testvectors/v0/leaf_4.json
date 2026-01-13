@@ -1,0 +1,42 @@
+{
+  "manifest": {
+    "actor": {
+      "display": "Publisher Service",
+      "id": "publisher-svc",
+      "type": "service"
+    },
+    "claims": {
+      "tags": [
+        "tv0"
+      ]
+    },
+    "inputs": [],
+    "manifest_id": "00000000-0000-0000-0000-000000000004",
+    "schema": "trust.manifest.v0",
+    "subject": {
+      "hash": {
+        "alg": "sha256",
+        "value": "4d394d7c79d69dbef1797adf744112f0813a86026675270b58747d04a1e3b29a"
+      },
+      "media_type": "application/json",
+      "size_bytes": 21,
+      "type": "artifact"
+    },
+    "tenant_id": "c6d1fcb6-2e5c-4d80-9e61-1ac7c0e8f2d1",
+    "time": {
+      "created_at": "2026-01-12T05:00:00Z",
+      "submitted_at": "2026-01-12T05:00:00Z"
+    },
+    "tool": {
+      "environment": "prod",
+      "name": "pipeline",
+      "vendor": "acme",
+      "version": "0.1.0"
+    }
+  },
+  "signature": {
+    "alg": "ed25519",
+    "kid": "tenant-key-001",
+    "value": "dfzyWcxXveP1ZJiMlGhBKxVhexjGI8wqER0qN1BMnyZoV+2w7u67ZqGdrdYsUTae0lIpJsWA9b5B9WDJNCMKDA=="
+  }
+}

@@ -1,0 +1,15 @@
+# test log
+stat ../../../policy/bundles/reference_v0/.
+open ../../../policy/bundles/reference_v0/.
+open ../../../policy/bundles/reference_v0/policy.rego
+stat ../../../policy/bundles/reference_v0
+open ../../../policy/bundles/reference_v0
+stat ../../../policy/bundles/reference_v0/policy.rego
+open ../../../policy/bundles/reference_v0/policy.rego
+stat ../../../policy/bundles/reference_v0/.
+open ../../../policy/bundles/reference_v0/.
+open ../../../policy/bundles/reference_v0/policy.rego
+stat ../../../policy/bundles/reference_v0
+open ../../../policy/bundles/reference_v0
+stat ../../../policy/bundles/reference_v0/policy.rego
+open ../../../policy/bundles/reference_v0/policy.rego

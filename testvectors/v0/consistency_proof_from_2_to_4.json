@@ -1,0 +1,9 @@
+{
+  "from_size": 2,
+  "note": "CT-style consistency proof adapted to node_hash=sha256(0x01||L||R); see docs/crypto_encoding_v0.md",
+  "path": [
+    "c1eeef4a59380c662b99f15586764a94782c0d670dc978084a7b3fe2daf3ce7c"
+  ],
+  "tenant_id": "c6d1fcb6-2e5c-4d80-9e61-1ac7c0e8f2d1",
+  "to_size": 4
+}

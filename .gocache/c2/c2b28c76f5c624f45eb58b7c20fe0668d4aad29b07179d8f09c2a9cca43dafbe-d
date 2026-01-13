@@ -1,0 +1,3 @@
+./interfaces.go
+./record_signed_manifest.go
+./verify_signed_manifest.go
