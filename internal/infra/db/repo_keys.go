@@ -6,16 +6,18 @@ import (
 	"time"
 
 	"proteus/internal/domain"
+	"proteus/internal/usecase"
 
 	"gorm.io/gorm"
 )
 
 type SigningKeyRepository struct {
-	db *gorm.DB
+	db      *gorm.DB
+	purpose domain.KeyPurpose
 }
 
 func NewSigningKeyRepository(db *gorm.DB) *SigningKeyRepository {
-	return &SigningKeyRepository{db: db}
+	return &SigningKeyRepository{db: db, purpose: domain.KeyPurposeSigning}
 }
 
 func (r *SigningKeyRepository) GetByKID(ctx context.Context, tenantID, kid string) (*domain.SigningKey, error) {
@@ -24,7 +26,7 @@ func (r *SigningKeyRepository) GetByKID(ctx context.Context, tenantID, kid strin
 	}
 	var model SigningKeyModel
 	err := r.db.WithContext(ctx).
-		Where("tenant_id = ? AND kid = ?", tenantID, kid).
+		Where("tenant_id = ? AND kid = ? AND purpose = ?", tenantID, kid, string(r.purpose)).
 		First(&model).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -41,7 +43,7 @@ func (r *SigningKeyRepository) ListByTenant(ctx context.Context, tenantID string
 	}
 	var models []SigningKeyModel
 	err := r.db.WithContext(ctx).
-		Where("tenant_id = ?", tenantID).
+		Where("tenant_id = ? AND purpose = ?", tenantID, string(r.purpose)).
 		Order("created_at ASC").
 		Find(&models).Error
 	if err != nil {
@@ -78,6 +80,7 @@ func (r *SigningKeyRepository) Create(ctx context.Context, key domain.SigningKey
 		ID:        keyID,
 		TenantID:  key.TenantID,
 		KID:       key.KID,
+		Purpose:   string(r.purpose),
 		Alg:       key.Alg,
 		PublicKey: copyBytes(key.PublicKey),
 		Status:    string(status),
@@ -88,12 +91,50 @@ func (r *SigningKeyRepository) Create(ctx context.Context, key domain.SigningKey
 	return r.db.WithContext(ctx).Create(&model).Error
 }
 
+func (r *SigningKeyRepository) GetActive(ctx context.Context, tenantID string) (*domain.SigningKey, error) {
+	if r.db == nil {
+		return nil, errDBUnavailable
+	}
+	var model SigningKeyModel
+	err := r.db.WithContext(ctx).
+		Where("tenant_id = ? AND status = ? AND purpose = ?", tenantID, string(domain.KeyStatusActive), string(r.purpose)).
+		Order("created_at DESC").
+		First(&model).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, err
+	}
+	return signingKeyFromModel(model), nil
+}
+
+func (r *SigningKeyRepository) UpdateStatus(ctx context.Context, tenantID, kid string, status domain.KeyStatus) error {
+	if r.db == nil {
+		return errDBUnavailable
+	}
+	return r.db.WithContext(ctx).
+		Model(&SigningKeyModel{}).
+		Where("tenant_id = ? AND kid = ? AND purpose = ?", tenantID, kid, string(r.purpose)).
+		Update("status", string(status)).Error
+}
+
+func (r *SigningKeyRepository) WithTx(ctx context.Context, fn func(store usecase.KeyRotationStore) error) error {
+	if r.db == nil {
+		return errDBUnavailable
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return fn(&SigningKeyRepository{db: tx, purpose: r.purpose})
+	})
+}
+
 type LogKeyRepository struct {
-	db *gorm.DB
+	db      *gorm.DB
+	purpose domain.KeyPurpose
 }
 
 func NewLogKeyRepository(db *gorm.DB) *LogKeyRepository {
-	return &LogKeyRepository{db: db}
+	return &LogKeyRepository{db: db, purpose: domain.KeyPurposeLog}
 }
 
 func (r *LogKeyRepository) GetActive(ctx context.Context, tenantID string) (*domain.SigningKey, error) {
@@ -102,7 +143,7 @@ func (r *LogKeyRepository) GetActive(ctx context.Context, tenantID string) (*dom
 	}
 	var model SigningKeyModel
 	err := r.db.WithContext(ctx).
-		Where("tenant_id = ? AND status = ?", tenantID, string(domain.KeyStatusActive)).
+		Where("tenant_id = ? AND status = ? AND purpose = ?", tenantID, string(domain.KeyStatusActive), string(r.purpose)).
 		Order("created_at DESC").
 		First(&model).Error
 	if err != nil {
@@ -120,7 +161,7 @@ func (r *LogKeyRepository) ListByTenant(ctx context.Context, tenantID string) ([
 	}
 	var models []SigningKeyModel
 	err := r.db.WithContext(ctx).
-		Where("tenant_id = ?", tenantID).
+		Where("tenant_id = ? AND purpose = ?", tenantID, string(r.purpose)).
 		Order("created_at ASC").
 		Find(&models).Error
 	if err != nil {
@@ -157,6 +198,7 @@ func (r *LogKeyRepository) Create(ctx context.Context, key domain.SigningKey) er
 		ID:        keyID,
 		TenantID:  key.TenantID,
 		KID:       key.KID,
+		Purpose:   string(r.purpose),
 		Alg:       key.Alg,
 		PublicKey: copyBytes(key.PublicKey),
 		Status:    string(status),
@@ -167,11 +209,31 @@ func (r *LogKeyRepository) Create(ctx context.Context, key domain.SigningKey) er
 	return r.db.WithContext(ctx).Create(&model).Error
 }
 
+func (r *LogKeyRepository) UpdateStatus(ctx context.Context, tenantID, kid string, status domain.KeyStatus) error {
+	if r.db == nil {
+		return errDBUnavailable
+	}
+	return r.db.WithContext(ctx).
+		Model(&SigningKeyModel{}).
+		Where("tenant_id = ? AND kid = ? AND purpose = ?", tenantID, kid, string(r.purpose)).
+		Update("status", string(status)).Error
+}
+
+func (r *LogKeyRepository) WithTx(ctx context.Context, fn func(store usecase.KeyRotationStore) error) error {
+	if r.db == nil {
+		return errDBUnavailable
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return fn(&LogKeyRepository{db: tx, purpose: r.purpose})
+	})
+}
+
 func signingKeyFromModel(model SigningKeyModel) *domain.SigningKey {
 	return &domain.SigningKey{
 		ID:        model.ID,
 		TenantID:  model.TenantID,
 		KID:       model.KID,
+		Purpose:   domain.KeyPurpose(model.Purpose),
 		Alg:       model.Alg,
 		PublicKey: copyBytes(model.PublicKey),
 		Status:    domain.KeyStatus(model.Status),

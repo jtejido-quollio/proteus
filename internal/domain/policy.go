@@ -1,10 +1,11 @@
 package domain
 
 type PolicyInput struct {
-	Envelope     SignedManifestEnvelope `json:"envelope"`
-	Verification PolicyVerification     `json:"verification"`
-	Options      *PolicyOptions         `json:"options,omitempty"`
-	Derivation   DerivationReceipt      `json:"derivation,omitempty"`
+	Envelope         SignedManifestEnvelope `json:"envelope"`
+	Verification     PolicyVerification     `json:"verification"`
+	Options          *PolicyOptions         `json:"options,omitempty"`
+	Derivation       DerivationReceipt      `json:"derivation,omitempty"`
+	RevocationEpoch  int64                  `json:"revocation_epoch"`
 }
 
 type PolicyVerification struct {

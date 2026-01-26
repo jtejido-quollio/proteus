@@ -10,9 +10,10 @@ import (
 const DecisionEngineVersion = "decision.v0.0.1"
 
 type DecisionInput struct {
-	Verification domain.PolicyVerification
-	Derivation   *domain.DerivationSummary
-	Policy       domain.PolicyResult
+	Verification    domain.PolicyVerification
+	Derivation      *domain.DerivationSummary
+	Policy          domain.PolicyResult
+	RevocationEpoch int64
 }
 
 type DecisionResult struct {
@@ -33,9 +34,12 @@ func (e *DecisionEngineV0) Evaluate(input DecisionInput) (DecisionResult, error)
 	ordered := sortedReasons(reasons)
 	action := "allow"
 	score := 0
-	if len(ordered) > 0 || !input.Policy.Allow {
-		action = "deny"
+	if !input.Policy.Allow {
+		action = "block"
 		score = 100
+	} else if input.Derivation != nil && !input.Derivation.Complete {
+		action = "require_review"
+		score = 50
 	}
 
 	return DecisionResult{

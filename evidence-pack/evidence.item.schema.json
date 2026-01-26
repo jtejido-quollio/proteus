@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://proteus.example/schemas/evidence-pack/evidence.item.schema.json",
+  "title": "Evidence Item",
+  "type": "object",
+  "required": [
+    "evidence_id",
+    "tenant_id",
+    "case_id",
+    "kind",
+    "created_at",
+    "references"
+  ],
+  "properties": {
+    "evidence_id": {
+      "type": "string"
+    },
+    "tenant_id": {
+      "type": "string"
+    },
+    "case_id": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "artifact",
+        "verification_receipt",
+        "anchor_receipt",
+        "derivation_edge",
+        "policy_decision",
+        "human_attachment",
+        "external_reference"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "label": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "hash": {
+      "type": "object",
+      "required": [
+        "alg",
+        "value"
+      ],
+      "properties": {
+        "alg": {
+          "type": "string",
+          "enum": [
+            "sha256"
+          ]
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "pack_paths": {
+      "type": "object",
+      "properties": {
+        "metadata": {
+          "type": "string"
+        },
+        "blobs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "type",
+          "ref"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "artifact",
+              "manifest",
+              "receipt_verify",
+              "receipt_anchor",
+              "policy_snapshot",
+              "case_event",
+              "external_uri"
+            ]
+          },
+          "ref": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

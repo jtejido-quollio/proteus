@@ -5,8 +5,8 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
-	"encoding/json"
 	"encoding/hex"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -81,6 +81,20 @@ func TestVerifyEvidenceBundle_ModifiedReceipt(t *testing.T) {
 	}
 }
 
+func TestVerifyEvidenceBundle_RevocationEpochMismatch(t *testing.T) {
+	bundle := buildEvidenceBundle(t)
+	bundle.RevocationEpoch++
+
+	verifier := buildEvidenceVerifier(t)
+	result, err := verifier.Execute(context.Background(), bundle)
+	if err != nil {
+		t.Fatalf("verify evidence bundle: %v", err)
+	}
+	if !containsFailure(result.Failures, EvidenceFailReplayDigestMismatch) {
+		t.Fatalf("expected failure %s, got %v", EvidenceFailReplayDigestMismatch, result.Failures)
+	}
+}
+
 func buildEvidenceVerifier(t *testing.T) *VerifyEvidenceBundle {
 	t.Helper()
 	policyEngine, err := policyopa.NewEngineFromBundlePath(context.Background(), filepath.Join("..", "..", "policy", "bundles", "reference_v0"), "reference_v0")
@@ -119,6 +133,7 @@ func buildEvidenceBundleJSON(t *testing.T) []byte {
 			env.Manifest.TenantID + ":" + env.Signature.KID: {
 				TenantID:  env.Manifest.TenantID,
 				KID:       env.Signature.KID,
+				Purpose:   domain.KeyPurposeSigning,
 				Alg:       keys.Alg,
 				PublicKey: pubKey,
 				Status:    domain.KeyStatusActive,
@@ -132,6 +147,7 @@ func buildEvidenceBundleJSON(t *testing.T) []byte {
 	logKey := domain.SigningKey{
 		TenantID:  env.Manifest.TenantID,
 		KID:       "log-key-1",
+		Purpose:   domain.KeyPurposeLog,
 		Alg:       "ed25519",
 		PublicKey: logPubKey,
 		Status:    domain.KeyStatusActive,
@@ -192,8 +208,8 @@ func buildEvidenceBundleJSON(t *testing.T) []byte {
 	policyEval := policyEvaluationFromReceipt(t, receipt.Policy)
 
 	input := bundles.BundleInput{
-		BundleID:   "bundle-1",
-		Envelopes:  []domain.SignedManifestEnvelope{env},
+		BundleID:  "bundle-1",
+		Envelopes: []domain.SignedManifestEnvelope{env},
 		Proofs: []bundles.ProofInput{
 			{
 				STH:          *recordResp.STH,
@@ -204,6 +220,7 @@ func buildEvidenceBundleJSON(t *testing.T) []byte {
 		Receipt:          receiptToBundle(receipt),
 		PolicyEvaluation: &policyEval,
 		Decision:         receipt.Decision,
+		RevocationEpoch:  receipt.RevocationEpoch,
 		SigningKeys:      []domain.SigningKey{keyRepo.keys[env.Manifest.TenantID+":"+env.Signature.KID]},
 		LogKeys:          []domain.SigningKey{logKey},
 	}

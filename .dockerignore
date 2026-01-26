@@ -1,0 +1,8 @@
+.git
+.gocache
+**/.gocache
+**/.DS_Store
+*.log
+tmp/
+docs/
+testvectors/

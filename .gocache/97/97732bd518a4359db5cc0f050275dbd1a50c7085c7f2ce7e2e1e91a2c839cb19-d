@@ -1,0 +1,13 @@
+./anchor.go
+./audit.go
+./auth.go
+./errors.go
+./keymanager.go
+./keys.go
+./manifest.go
+./policy.go
+./provenance.go
+./receipt.go
+./tenant.go
+./transparency_log.go
+./verification_result.go

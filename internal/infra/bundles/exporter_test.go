@@ -145,6 +145,22 @@ func TestEvidenceBundleExport_Replayable(t *testing.T) {
 	}
 }
 
+func TestEvidenceBundleExport_ReplayDigestChangesWithRevocationEpoch(t *testing.T) {
+	input := buildBundleInput(t)
+	bundleA, err := BuildEvidenceBundle(input)
+	if err != nil {
+		t.Fatalf("build bundle A: %v", err)
+	}
+	input.RevocationEpoch++
+	bundleB, err := BuildEvidenceBundle(input)
+	if err != nil {
+		t.Fatalf("build bundle B: %v", err)
+	}
+	if bundleA.ReplayInputsDigest == bundleB.ReplayInputsDigest {
+		t.Fatalf("expected replay digest to change with revocation_epoch")
+	}
+}
+
 func buildBundleInput(t *testing.T) BundleInput {
 	t.Helper()
 	ctx := context.Background()
@@ -158,6 +174,7 @@ func buildBundleInput(t *testing.T) BundleInput {
 			env.Manifest.TenantID + ":" + env.Signature.KID: {
 				TenantID:  env.Manifest.TenantID,
 				KID:       env.Signature.KID,
+				Purpose:   domain.KeyPurposeSigning,
 				Alg:       keys.Alg,
 				PublicKey: pubKey,
 				Status:    domain.KeyStatusActive,
@@ -172,6 +189,7 @@ func buildBundleInput(t *testing.T) BundleInput {
 		key: domain.SigningKey{
 			TenantID:  env.Manifest.TenantID,
 			KID:       "log-key-1",
+			Purpose:   domain.KeyPurposeLog,
 			Alg:       "ed25519",
 			PublicKey: logPubKey,
 			Status:    domain.KeyStatusActive,
@@ -235,8 +253,8 @@ func buildBundleInput(t *testing.T) BundleInput {
 	}
 
 	return BundleInput{
-		BundleID:   "bundle-1",
-		Envelopes:  []domain.SignedManifestEnvelope{env},
+		BundleID:  "bundle-1",
+		Envelopes: []domain.SignedManifestEnvelope{env},
 		Proofs: []ProofInput{
 			{
 				STH:          *recordResp.STH,
@@ -247,6 +265,7 @@ func buildBundleInput(t *testing.T) BundleInput {
 		Receipt:          receiptPayload,
 		PolicyEvaluation: &policyEval,
 		Decision:         receiptPayload.Decision,
+		RevocationEpoch:  receipt.RevocationEpoch,
 		Engines: replay.EngineVersions{
 			Verification: replay.DefaultVerificationEngineVersion,
 			Policy:       replay.DefaultPolicyEngineVersion,
@@ -317,10 +336,10 @@ func computeReplayDigestFromOffline(t *testing.T, bundle EvidenceBundle, receipt
 		Proofs: []ProofInput{
 			{
 				STH: domain.STH{
-					TenantID:  sth.TenantID,
-					TreeSize:  sth.TreeSize,
-					RootHash:  decodeHex(t, sth.RootHash),
-					IssuedAt:  issuedAt,
+					TenantID: sth.TenantID,
+					TreeSize: sth.TreeSize,
+					RootHash: decodeHex(t, sth.RootHash),
+					IssuedAt: issuedAt,
 				},
 				STHSignature: sth.Signature,
 				Inclusion: domain.InclusionProof{
@@ -332,8 +351,9 @@ func computeReplayDigestFromOffline(t *testing.T, bundle EvidenceBundle, receipt
 				},
 			},
 		},
-		Receipt: receiptFromVerify(receipt),
-		Engines: bundle.Engines,
+		Receipt:         receiptFromVerify(receipt),
+		Engines:         bundle.Engines,
+		RevocationEpoch: bundle.RevocationEpoch,
 	}
 	digest, err := computeReplayInputsDigest(input, input.Receipt)
 	if err != nil {
@@ -385,6 +405,7 @@ func verifyOffline(t *testing.T, bundle EvidenceBundle) *usecase.VerifyReceipt {
 			env.Manifest.TenantID + ":" + env.Signature.KID: {
 				TenantID:  env.Manifest.TenantID,
 				KID:       env.Signature.KID,
+				Purpose:   domain.KeyPurposeSigning,
 				Alg:       signingKey.Alg,
 				PublicKey: pubKey,
 				Status:    domain.KeyStatusActive,
@@ -398,6 +419,7 @@ func verifyOffline(t *testing.T, bundle EvidenceBundle) *usecase.VerifyReceipt {
 		key: domain.SigningKey{
 			TenantID:  env.Manifest.TenantID,
 			KID:       logKey.KID,
+			Purpose:   domain.KeyPurposeLog,
 			Alg:       logKey.Alg,
 			PublicKey: decodeBase64(t, logKey.PublicKeyBase64),
 			Status:    domain.KeyStatusActive,
@@ -427,10 +449,10 @@ func verifyOffline(t *testing.T, bundle EvidenceBundle) *usecase.VerifyReceipt {
 		Envelope: env,
 		ProofBundle: &usecase.ProofBundle{
 			STH: domain.STH{
-				TenantID:  sth.TenantID,
-				TreeSize:  sth.TreeSize,
-				RootHash:  decodeHex(t, sth.RootHash),
-				IssuedAt:  issuedAt,
+				TenantID: sth.TenantID,
+				TreeSize: sth.TreeSize,
+				RootHash: decodeHex(t, sth.RootHash),
+				IssuedAt: issuedAt,
 			},
 			STHSignature: sth.Signature,
 			Inclusion: domain.InclusionProof{

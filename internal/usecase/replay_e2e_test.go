@@ -30,6 +30,7 @@ func TestReplayBundle_EndToEnd(t *testing.T) {
 			env.Manifest.TenantID + ":" + env.Signature.KID: {
 				TenantID:  env.Manifest.TenantID,
 				KID:       env.Signature.KID,
+				Purpose:   domain.KeyPurposeSigning,
 				Alg:       keys.Alg,
 				PublicKey: pubKey,
 				Status:    domain.KeyStatusActive,
@@ -44,6 +45,7 @@ func TestReplayBundle_EndToEnd(t *testing.T) {
 		key: domain.SigningKey{
 			TenantID:  env.Manifest.TenantID,
 			KID:       "log-key-1",
+			Purpose:   domain.KeyPurposeLog,
 			Alg:       "ed25519",
 			PublicKey: logPubKey,
 			Status:    domain.KeyStatusActive,
@@ -120,6 +122,7 @@ func TestReplayBundle_EndToEnd(t *testing.T) {
 		Inclusion:        *receipt.InclusionProof,
 		PolicyEvaluation: &policyEval,
 		DecisionResult:   receipt.Decision,
+		RevocationEpoch:  receipt.RevocationEpoch,
 	})
 	if err != nil {
 		t.Fatalf("build replay bundle: %v", err)
@@ -153,6 +156,7 @@ func TestReplayBundle_EndToEnd(t *testing.T) {
 		Inclusion:        replayProof.Inclusion,
 		PolicyEvaluation: &offlineEval,
 		DecisionResult:   offlineReceipt.Decision,
+		RevocationEpoch:  offlineReceipt.RevocationEpoch,
 	})
 	if err != nil {
 		t.Fatalf("build offline replay bundle: %v", err)

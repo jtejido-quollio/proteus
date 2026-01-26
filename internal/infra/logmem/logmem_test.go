@@ -5,11 +5,15 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+	"time"
+
+	"proteus/internal/domain"
 )
 
 type inclusionVector struct {
@@ -204,6 +208,28 @@ func decodeHex(t *testing.T, value string) []byte {
 		t.Fatalf("decode hex: %v", err)
 	}
 	return out
+}
+
+type failingAnchor struct{}
+
+func (f failingAnchor) AnchorSTH(ctx context.Context, tenantID string, sth domain.STH) ([]domain.AnchorReceipt, error) {
+	return nil, errors.New("anchor failed")
+}
+
+func TestAppendLeafIgnoresAnchorFailure(t *testing.T) {
+	log := NewWithSignerClockAndAnchor(nil, time.Now, failingAnchor{}, 10*time.Millisecond)
+	leaf := bytes.Repeat([]byte{0x01}, 32)
+	if _, _, _, err := log.AppendLeaf(context.Background(), "tenant", "signed-id", leaf); err != nil {
+		t.Fatalf("append leaf failed: %v", err)
+	}
+}
+
+func TestAppendLeafNoAnchorConfigured(t *testing.T) {
+	log := NewWithSignerAndClock(nil, time.Now)
+	leaf := bytes.Repeat([]byte{0x02}, 32)
+	if _, _, _, err := log.AppendLeaf(context.Background(), "tenant", "signed-id", leaf); err != nil {
+		t.Fatalf("append leaf failed: %v", err)
+	}
 }
 
 func hashPathEqual(a, b [][]byte) bool {

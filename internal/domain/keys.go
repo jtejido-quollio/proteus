@@ -14,6 +14,7 @@ type SigningKey struct {
 	ID        string
 	TenantID  string
 	KID       string
+	Purpose   KeyPurpose
 	Alg       string
 	PublicKey []byte
 	Status    KeyStatus

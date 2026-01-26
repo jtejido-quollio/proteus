@@ -17,6 +17,7 @@ type ReplayBundle struct {
 	Policy             *PolicyReplay                 `json:"policy,omitempty"`
 	Decision           domain.DecisionReceipt        `json:"decision,omitempty"`
 	Engines            EngineVersions                `json:"engines"`
+	RevocationEpoch    int64                         `json:"revocation_epoch"`
 	ReplayInputsDigest string                        `json:"replay_inputs_digest,omitempty"`
 }
 
@@ -54,6 +55,7 @@ type replayInputs struct {
 	Policy     *replayInputsPolicy           `json:"policy,omitempty"`
 	Decision   domain.DecisionReceipt        `json:"decision,omitempty"`
 	Engines    EngineVersions                `json:"engines"`
+	RevocationEpoch int64                    `json:"revocation_epoch"`
 }
 
 type replayInputsProof struct {
@@ -98,6 +100,7 @@ type BundleInput struct {
 	PolicyEvaluation   *domain.PolicyEvaluation
 	DecisionResult     domain.DecisionReceipt
 	Engines            EngineVersions
+	RevocationEpoch    int64
 	ReplayInputsDigest string
 }
 
@@ -132,6 +135,7 @@ func BuildReplayBundle(input BundleInput) (ReplayBundle, error) {
 		Policy:             policy,
 		Decision:           input.DecisionResult,
 		Engines:            engines,
+		RevocationEpoch:    input.RevocationEpoch,
 		ReplayInputsDigest: input.ReplayInputsDigest,
 	}
 	if bundle.ReplayInputsDigest == "" {
@@ -253,6 +257,7 @@ func buildReplayInputs(bundle ReplayBundle) replayInputs {
 		Derivation: bundle.Derivation,
 		Decision:   bundle.Decision,
 		Engines:    bundle.Engines,
+		RevocationEpoch: bundle.RevocationEpoch,
 	}
 	if bundle.Policy != nil {
 		inputs.Policy = &replayInputsPolicy{

@@ -3,7 +3,6 @@ package http
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -62,10 +61,10 @@ type verificationResponse struct {
 
 type verifyResponse struct {
 	verificationResponse
-	Derivation   domain.DerivationReceipt `json:"derivation,omitempty"`
-	Policy       domain.PolicyReceipt     `json:"policy,omitempty"`
-	Decision     domain.DecisionReceipt   `json:"decision,omitempty"`
-	Replay       domain.ReplayReceipt     `json:"replay,omitempty"`
+	Derivation domain.DerivationReceipt `json:"derivation,omitempty"`
+	Policy     domain.PolicyReceipt     `json:"policy,omitempty"`
+	Decision   domain.DecisionReceipt   `json:"decision,omitempty"`
+	Replay     domain.ReplayReceipt     `json:"replay,omitempty"`
 }
 
 type sthResponse struct {
@@ -163,6 +162,121 @@ type keyResponse struct {
 	NotAfter  string `json:"not_after,omitempty"`
 }
 
+func (s *Server) handleLineage(c *gin.Context) {
+	if s.provenance == nil {
+		writeError(c, domain.ErrNotFound)
+		return
+	}
+	principal, ok := s.requireAuth(c, routeLineageRead, "", false)
+	if !ok {
+		return
+	}
+	tenantID := strings.TrimSpace(principal.TenantID)
+	if tenantID == "" {
+		writeErrorCode(c, http.StatusForbidden, "MISSING_TENANT_CLAIM", "tenant_id claim required")
+		return
+	}
+	if !s.enforceRateLimit(c, routeLineageRead, tenantID, principal) {
+		return
+	}
+	hashValue := strings.TrimSpace(c.Param("artifact_hash"))
+	if hashValue == "" {
+		writeErrorCode(c, http.StatusBadRequest, "INVALID_HASH", "artifact_hash is required")
+		return
+	}
+	if len(hashValue) != 64 {
+		writeErrorCode(c, http.StatusBadRequest, "INVALID_HASH", "artifact_hash must be 64 hex chars")
+		return
+	}
+	if _, err := hex.DecodeString(hashValue); err != nil {
+		writeErrorCode(c, http.StatusBadRequest, "INVALID_HASH", "invalid artifact_hash")
+		return
+	}
+	maxDepth := 20
+	if raw := strings.TrimSpace(c.Query("max_depth")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 0 {
+			writeErrorCode(c, http.StatusBadRequest, "INVALID_QUERY", "invalid max_depth")
+			return
+		}
+		maxDepth = value
+	}
+	maxNodes := 5000
+	if raw := strings.TrimSpace(c.Query("max_nodes")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 0 {
+			writeErrorCode(c, http.StatusBadRequest, "INVALID_QUERY", "invalid max_nodes")
+			return
+		}
+		maxNodes = value
+	}
+	hashValue = strings.ToLower(hashValue)
+	hash := domain.Hash{
+		Alg:   "sha256",
+		Value: hashValue,
+	}
+	result, err := s.provenance.Lineage(c.Request.Context(), tenantID, hash, usecase.LineageOptions{
+		MaxDepth: maxDepth,
+		MaxNodes: maxNodes,
+	})
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (s *Server) handleDerivation(c *gin.Context) {
+	if s.provenance == nil {
+		writeError(c, domain.ErrNotFound)
+		return
+	}
+	principal, ok := s.requireAuth(c, routeDerivationRead, "", false)
+	if !ok {
+		return
+	}
+	tenantID := strings.TrimSpace(principal.TenantID)
+	if tenantID == "" {
+		writeErrorCode(c, http.StatusForbidden, "MISSING_TENANT_CLAIM", "tenant_id claim required")
+		return
+	}
+	if !s.enforceRateLimit(c, routeDerivationRead, tenantID, principal) {
+		return
+	}
+	manifestID := strings.TrimSpace(c.Param("manifest_id"))
+	if manifestID == "" {
+		writeErrorCode(c, http.StatusBadRequest, "INVALID_MANIFEST_ID", "manifest_id is required")
+		return
+	}
+	maxDepth := 20
+	if raw := strings.TrimSpace(c.Query("max_depth")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 0 {
+			writeErrorCode(c, http.StatusBadRequest, "INVALID_QUERY", "invalid max_depth")
+			return
+		}
+		maxDepth = value
+	}
+	maxNodes := 5000
+	if raw := strings.TrimSpace(c.Query("max_nodes")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 0 {
+			writeErrorCode(c, http.StatusBadRequest, "INVALID_QUERY", "invalid max_nodes")
+			return
+		}
+		maxNodes = value
+	}
+	result, err := s.provenance.Derivation(c.Request.Context(), tenantID, manifestID, usecase.LineageOptions{
+		MaxDepth: maxDepth,
+		MaxNodes: maxNodes,
+	})
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 func (s *Server) handleRecord(c *gin.Context) {
 	if s.recordUC == nil {
 		writeError(c, domain.ErrNotFound)
@@ -171,6 +285,17 @@ func (s *Server) handleRecord(c *gin.Context) {
 	var env domain.SignedManifestEnvelope
 	if err := c.ShouldBindJSON(&env); err != nil {
 		writeErrorCode(c, http.StatusBadRequest, "INVALID_JSON", "invalid json")
+		return
+	}
+	if env.Manifest.TenantID == "" {
+		writeErrorCode(c, http.StatusBadRequest, "INVALID_TENANT", "tenant_id is required")
+		return
+	}
+	principal, ok := s.requireAuth(c, routeManifestsRecord, env.Manifest.TenantID, false)
+	if !ok {
+		return
+	}
+	if !s.enforceRateLimit(c, routeManifestsRecord, env.Manifest.TenantID, principal) {
 		return
 	}
 	resp, err := s.recordUC.Execute(c.Request.Context(), usecase.RecordSignedManifestRequest{Envelope: env})
@@ -200,6 +325,17 @@ func (s *Server) handleVerify(c *gin.Context) {
 	var req verifyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		writeErrorCode(c, http.StatusBadRequest, "INVALID_JSON", "invalid json")
+		return
+	}
+	if req.Envelope.Manifest.TenantID == "" {
+		writeErrorCode(c, http.StatusBadRequest, "INVALID_TENANT", "tenant_id is required")
+		return
+	}
+	principal, ok := s.requireAuth(c, routeManifestsVerify, req.Envelope.Manifest.TenantID, false)
+	if !ok {
+		return
+	}
+	if !s.enforceRateLimit(c, routeManifestsVerify, req.Envelope.Manifest.TenantID, principal) {
 		return
 	}
 	var artifact []byte
@@ -284,6 +420,13 @@ func (s *Server) handleListSigningKeys(c *gin.Context) {
 		return
 	}
 	tenantID := c.Param("tenant_id")
+	principal, ok := s.requireAuth(c, routeKeysRead, tenantID, false)
+	if !ok {
+		return
+	}
+	if !s.enforceRateLimit(c, routeKeysRead, tenantID, principal) {
+		return
+	}
 	keys, err := s.signingKey.ListByTenant(c.Request.Context(), tenantID)
 	if err != nil {
 		writeError(c, err)
@@ -302,6 +445,13 @@ func (s *Server) handleListLogKeys(c *gin.Context) {
 		return
 	}
 	tenantID := c.Param("tenant_id")
+	principal, ok := s.requireAuth(c, routeKeysRead, tenantID, false)
+	if !ok {
+		return
+	}
+	if !s.enforceRateLimit(c, routeKeysRead, tenantID, principal) {
+		return
+	}
 	keys, err := s.logKey.ListByTenant(c.Request.Context(), tenantID)
 	if err != nil {
 		writeError(c, err)
@@ -320,6 +470,13 @@ func (s *Server) handleLatestSTH(c *gin.Context) {
 		return
 	}
 	tenantID := c.Param("tenant_id")
+	principal, ok := s.requireAuth(c, routeLogsRead, tenantID, false)
+	if !ok {
+		return
+	}
+	if !s.enforceRateLimit(c, routeLogsRead, tenantID, principal) {
+		return
+	}
 	sth, err := s.log.GetLatestSTH(c.Request.Context(), tenantID)
 	if err != nil {
 		writeError(c, err)
@@ -334,6 +491,13 @@ func (s *Server) handleInclusionProof(c *gin.Context) {
 		return
 	}
 	tenantID := c.Param("tenant_id")
+	principal, ok := s.requireAuth(c, routeLogsRead, tenantID, false)
+	if !ok {
+		return
+	}
+	if !s.enforceRateLimit(c, routeLogsRead, tenantID, principal) {
+		return
+	}
 	leafHex := c.Param("leaf_hash")
 	leafHash, err := hex.DecodeString(leafHex)
 	if err != nil {
@@ -359,6 +523,13 @@ func (s *Server) handleConsistencyProof(c *gin.Context) {
 		return
 	}
 	tenantID := c.Param("tenant_id")
+	principal, ok := s.requireAuth(c, routeLogsRead, tenantID, false)
+	if !ok {
+		return
+	}
+	if !s.enforceRateLimit(c, routeLogsRead, tenantID, principal) {
+		return
+	}
 	fromStr := c.Query("from")
 	toStr := c.Query("to")
 	fromSize, err := strconv.ParseInt(fromStr, 10, 64)
@@ -424,14 +595,14 @@ func (s *Server) handleAdminCreateTenant(c *gin.Context) {
 }
 
 func (s *Server) handleAdminRegisterSigningKey(c *gin.Context) {
-	s.handleAdminRegisterKey(c, s.signingKey)
+	s.handleAdminRegisterKey(c, s.signingKey, domain.KeyPurposeSigning)
 }
 
 func (s *Server) handleAdminRegisterLogKey(c *gin.Context) {
-	s.handleAdminRegisterKey(c, s.logKey)
+	s.handleAdminRegisterKey(c, s.logKey, domain.KeyPurposeLog)
 }
 
-func (s *Server) handleAdminRegisterKey(c *gin.Context, store KeyStore) {
+func (s *Server) handleAdminRegisterKey(c *gin.Context, store KeyStore, purpose domain.KeyPurpose) {
 	if !s.requireAdmin(c) {
 		return
 	}
@@ -481,6 +652,7 @@ func (s *Server) handleAdminRegisterKey(c *gin.Context, store KeyStore) {
 	key := domain.SigningKey{
 		TenantID:  tenantID,
 		KID:       req.KID,
+		Purpose:   purpose,
 		Alg:       req.Alg,
 		PublicKey: pubKey,
 		Status:    domain.KeyStatus(req.Status),
@@ -495,6 +667,13 @@ func (s *Server) handleAdminRegisterKey(c *gin.Context, store KeyStore) {
 		}
 		writeError(c, err)
 		return
+	}
+	if s.audit != nil {
+		actorType, actorID := s.auditActor(c)
+		if err := s.audit.EmitKeyRegistered(c.Request.Context(), actorType, actorID, tenantID, purpose, req.KID, domain.AuditResultSuccess, ""); err != nil {
+			writeError(c, err)
+			return
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
@@ -534,9 +713,23 @@ func (s *Server) handleAdminRevokeKey(c *gin.Context) {
 		Reason:    req.Reason,
 		CreatedAt: time.Now().UTC(),
 	}
-	if err := s.revocations.Revoke(c.Request.Context(), rev); err != nil {
-		writeError(c, err)
-		return
+	if s.revocationSvc != nil {
+		if _, err := s.revocationSvc.Revoke(c.Request.Context(), rev); err != nil {
+			writeError(c, err)
+			return
+		}
+	} else {
+		if err := s.revocations.Revoke(c.Request.Context(), rev); err != nil {
+			writeError(c, err)
+			return
+		}
+	}
+	if s.audit != nil {
+		actorType, actorID := s.auditActor(c)
+		if err := s.audit.EmitKeyRevoked(c.Request.Context(), actorType, actorID, tenantID, kid, domain.AuditResultSuccess, ""); err != nil {
+			writeError(c, err)
+			return
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
@@ -556,22 +749,61 @@ func (s *Server) handleAdminKeyAction(c *gin.Context) {
 	switch parts[1] {
 	case "revoke":
 		s.handleAdminRevokeKey(c)
+	case "rotate":
+		c.Params = append(c.Params, gin.Param{Key: "purpose", Value: parts[0]})
+		s.handleAdminRotateKey(c)
 	default:
 		writeErrorCode(c, http.StatusNotFound, "NOT_FOUND", "unknown action")
 	}
 }
 
-func (s *Server) requireAdmin(c *gin.Context) bool {
-	if s.adminAPIKey == "" {
-		writeErrorCode(c, http.StatusUnauthorized, "UNAUTHORIZED", "admin key required")
-		return false
+func (s *Server) handleAdminRotateKey(c *gin.Context) {
+	if !s.requireAdmin(c) {
+		return
 	}
-	key := c.GetHeader("X-Admin-Key")
-	if key == "" || subtle.ConstantTimeCompare([]byte(key), []byte(s.adminAPIKey)) != 1 {
-		writeErrorCode(c, http.StatusUnauthorized, "UNAUTHORIZED", "invalid admin key")
+	if s.rotation == nil {
+		writeError(c, domain.ErrNotFound)
+		return
+	}
+	tenantID := c.Param("tenant_id")
+	purpose := domain.KeyPurpose(c.Param("purpose"))
+	if purpose != domain.KeyPurposeSigning && purpose != domain.KeyPurposeLog {
+		writeErrorCode(c, http.StatusBadRequest, "INVALID_MANIFEST", "invalid purpose")
+		return
+	}
+	key, err := s.rotation.Rotate(c.Request.Context(), tenantID, purpose)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	if s.audit != nil {
+		actorType, actorID := s.auditActor(c)
+		if err := s.audit.EmitKeyRotated(c.Request.Context(), actorType, actorID, tenantID, purpose, key.KID, "", domain.AuditResultSuccess, ""); err != nil {
+			writeError(c, err)
+			return
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"kid":    key.KID,
+		"status": "rotated",
+	})
+}
+
+func (s *Server) requireAdmin(c *gin.Context) bool {
+	if _, ok := s.requireAuth(c, "admin:*", "", true); !ok {
 		return false
 	}
 	return true
+}
+
+func (s *Server) auditActor(c *gin.Context) (domain.AuditActorType, string) {
+	if key := strings.TrimSpace(c.GetHeader("X-Admin-Key")); key != "" {
+		return domain.AuditActorAdminAPIKey, key
+	}
+	if principal, ok := getPrincipal(c); ok && principal.Subject != "" {
+		return domain.AuditActorUser, principal.Subject
+	}
+	return domain.AuditActorSystem, ""
 }
 
 func buildVerificationResponse(receipt *usecase.VerifyReceipt) verificationResponse {
@@ -722,6 +954,8 @@ func writeError(c *gin.Context, err error) {
 		status, code = http.StatusNotFound, "NOT_FOUND"
 	case errors.Is(err, domain.ErrUnauthorized):
 		status, code = http.StatusUnauthorized, "UNAUTHORIZED"
+	case errors.Is(err, domain.ErrForbidden):
+		status, code = http.StatusForbidden, "FORBIDDEN"
 	}
 	writeErrorCode(c, status, code, err.Error())
 }

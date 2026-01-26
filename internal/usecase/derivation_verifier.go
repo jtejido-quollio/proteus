@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"time"
 
 	"proteus/internal/domain"
 )
@@ -11,19 +12,20 @@ import (
 type DerivationVerifier struct {
 	Manifests  ManifestReader
 	Provenance ProvenanceRepository
+	Keys       KeyRepository
 }
 
 func (v *DerivationVerifier) Verify(ctx context.Context, tenantID, manifestID string) (domain.DerivationSummary, error) {
-	if v == nil || v.Manifests == nil || v.Provenance == nil {
-		return domain.DerivationSummary{}, errors.New("derivation verifier requires manifest reader and provenance repository")
+	if v == nil || v.Manifests == nil || v.Provenance == nil || v.Keys == nil {
+		return domain.DerivationSummary{}, errors.New("derivation verifier requires manifest reader, provenance repository, and key repository")
 	}
 	state := derivationState{
 		failures:   make([]domain.DerivationFailure, 0),
 		failureSet: map[string]struct{}{},
 	}
 	stack := map[string]bool{}
-	cache := map[string]int{}
-	depth, err := v.walk(ctx, tenantID, manifestID, stack, cache, &state)
+	cache := map[string]derivationCacheEntry{}
+	depth, err := v.walk(ctx, tenantID, manifestID, nil, stack, cache, &state)
 	if err != nil {
 		return domain.DerivationSummary{}, err
 	}
@@ -40,12 +42,15 @@ func (v *DerivationVerifier) Verify(ctx context.Context, tenantID, manifestID st
 	return summary, nil
 }
 
-func (v *DerivationVerifier) walk(ctx context.Context, tenantID, manifestID string, stack map[string]bool, cache map[string]int, state *derivationState) (int, error) {
+func (v *DerivationVerifier) walk(ctx context.Context, tenantID, manifestID string, parentCreatedAt *time.Time, stack map[string]bool, cache map[string]derivationCacheEntry, state *derivationState) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	if depth, ok := cache[manifestID]; ok {
-		return depth, nil
+	if entry, ok := cache[manifestID]; ok {
+		if parentCreatedAt != nil && entry.createdAt.After(*parentCreatedAt) {
+			state.addFailure(domain.DerivationFailureTimeParadox, manifestID, nil)
+		}
+		return entry.depth, nil
 	}
 	if stack[manifestID] {
 		state.addFailure(domain.DerivationFailureCycleDetected, manifestID, nil)
@@ -64,6 +69,34 @@ func (v *DerivationVerifier) walk(ctx context.Context, tenantID, manifestID stri
 		return 0, err
 	}
 
+	if env.Manifest.Tool.Name == "" || env.Manifest.Tool.Version == "" {
+		state.addFailure(domain.DerivationFailureToolMetadataMissing, manifestID, nil)
+	}
+	if env.Manifest.Time.CreatedAt.After(env.Manifest.Time.SubmittedAt) {
+		state.addFailure(domain.DerivationFailureTimeParadox, manifestID, nil)
+	}
+	if parentCreatedAt != nil && env.Manifest.Time.CreatedAt.After(*parentCreatedAt) {
+		state.addFailure(domain.DerivationFailureTimeParadox, manifestID, nil)
+	}
+	if env.Signature.KID != "" {
+		revoked, err := v.Keys.IsRevoked(ctx, tenantID, env.Signature.KID)
+		if err != nil {
+			return 0, err
+		}
+		if revoked {
+			state.addFailure(domain.DerivationFailureSignerRevoked, manifestID, nil)
+		}
+	}
+	if env.Manifest.Subject.Hash.Alg != "" && env.Manifest.Subject.Hash.Value != "" {
+		if _, err := v.Provenance.GetArtifactByHash(ctx, tenantID, env.Manifest.Subject.Hash); err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				state.addFailure(domain.DerivationFailureArtifactMissing, manifestID, &env.Manifest.Subject.Hash)
+			} else {
+				return 0, err
+			}
+		}
+	}
+
 	inputs := sortedInputs(env.Manifest.Inputs)
 	maxDepth := 0
 	for _, input := range inputs {
@@ -72,6 +105,13 @@ func (v *DerivationVerifier) walk(ctx context.Context, tenantID, manifestID stri
 			continue
 		}
 		hash := input.Hash
+		if _, err := v.Provenance.GetArtifactByHash(ctx, tenantID, hash); err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				state.addFailure(domain.DerivationFailureArtifactMissing, manifestID, &hash)
+			} else {
+				return 0, err
+			}
+		}
 		generators, err := v.Provenance.ListGeneratedManifestIDs(ctx, tenantID, hash)
 		if err != nil {
 			return 0, err
@@ -85,7 +125,7 @@ func (v *DerivationVerifier) walk(ctx context.Context, tenantID, manifestID stri
 			state.addFailure(domain.DerivationFailureMultipleGenerators, manifestID, &hash)
 			continue
 		}
-		childDepth, err := v.walk(ctx, tenantID, generators[0], stack, cache, state)
+		childDepth, err := v.walk(ctx, tenantID, generators[0], &env.Manifest.Time.CreatedAt, stack, cache, state)
 		if err != nil {
 			return 0, err
 		}
@@ -93,7 +133,7 @@ func (v *DerivationVerifier) walk(ctx context.Context, tenantID, manifestID stri
 			maxDepth = childDepth + 1
 		}
 	}
-	cache[manifestID] = maxDepth
+	cache[manifestID] = derivationCacheEntry{depth: maxDepth, createdAt: env.Manifest.Time.CreatedAt}
 	return maxDepth, nil
 }
 
@@ -116,6 +156,11 @@ func inputKey(input domain.InputArtifact) string {
 type derivationState struct {
 	failures   []domain.DerivationFailure
 	failureSet map[string]struct{}
+}
+
+type derivationCacheEntry struct {
+	depth     int
+	createdAt time.Time
 }
 
 func (s *derivationState) addFailure(code string, manifestID string, hash *domain.Hash) {

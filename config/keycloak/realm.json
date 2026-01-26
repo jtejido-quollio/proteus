@@ -1,0 +1,94 @@
+{
+  "realm": "proteus",
+  "enabled": true,
+  "clients": [
+    {
+      "clientId": "proteus-api",
+      "name": "proteus-api",
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "directAccessGrantsEnabled": false,
+      "standardFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "proteus-secret",
+      "protocolMappers": [
+        {
+          "name": "tenant-id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "tenant_id",
+            "claim.name": "tenant_id",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        },
+        {
+          "name": "scopes",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "config": {
+            "claim.name": "scope",
+            "claim.value": "admin:* manifests:record manifests:verify logs:read keys:read lineage:read derivation:read",
+            "jsonType.label": "String",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        },
+        {
+          "name": "audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "proteus-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "roles": {
+    "realm": [
+      {
+        "name": "proteus_admin"
+      }
+    ]
+  },
+  "users": [
+    {
+      "username": "proteus-admin",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "proteus-admin",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "proteus_admin"
+      ],
+      "attributes": {
+        "tenant_id": [
+          "tenant-1"
+        ]
+      }
+    },
+    {
+      "username": "service-account-proteus-api",
+      "enabled": true,
+      "serviceAccountClientId": "proteus-api",
+      "realmRoles": [
+        "proteus_admin"
+      ],
+      "attributes": {
+        "tenant_id": [
+          "tenant-1"
+        ]
+      }
+    }
+  ]
+}

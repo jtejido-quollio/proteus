@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 
 	"proteus/internal/domain"
@@ -21,11 +22,12 @@ type RecordSignedManifestResponse struct {
 }
 
 type RecordSignedManifest struct {
-	Tenants TenantRepository
-	Keys    KeyRepository
-	Manif   ManifestRepository
-	Log     TenantLog
-	Crypto  CryptoService
+	Tenants    TenantRepository
+	Keys       KeyRepository
+	Manif      ManifestRepository
+	Log        TenantLog
+	Crypto     CryptoService
+	KeyManager domain.KeyManager
 	Provenance ProvenanceRepository
 }
 
@@ -48,6 +50,9 @@ func (uc *RecordSignedManifest) Execute(ctx context.Context, req RecordSignedMan
 		}
 		return nil, err
 	}
+	if key.Purpose != domain.KeyPurposeSigning {
+		return nil, domain.ErrKeyUnknown
+	}
 
 	revoked, err := uc.Keys.IsRevoked(ctx, env.Manifest.TenantID, env.Signature.KID)
 	if err != nil {
@@ -61,8 +66,22 @@ func (uc *RecordSignedManifest) Execute(ctx context.Context, req RecordSignedMan
 	if err != nil {
 		return nil, err
 	}
-	if err := uc.Crypto.VerifySignature(canonical, env.Signature, key.PublicKey); err != nil {
-		return nil, domain.ErrSignatureInvalid
+	if uc.KeyManager != nil {
+		sigBytes, err := base64.StdEncoding.DecodeString(env.Signature.Value)
+		if err != nil {
+			return nil, domain.ErrSignatureInvalid
+		}
+		if err := uc.KeyManager.Verify(ctx, domain.KeyRef{
+			TenantID: env.Manifest.TenantID,
+			Purpose:  domain.KeyPurposeSigning,
+			KID:      env.Signature.KID,
+		}, canonical, sigBytes, key.PublicKey); err != nil {
+			return nil, domain.ErrSignatureInvalid
+		}
+	} else {
+		if err := uc.Crypto.VerifySignature(canonical, env.Signature, key.PublicKey); err != nil {
+			return nil, domain.ErrSignatureInvalid
+		}
 	}
 
 	leafHash, err := uc.Crypto.ComputeLeafHash(env)

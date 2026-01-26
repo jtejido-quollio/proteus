@@ -41,6 +41,7 @@ type EvidenceBundle struct {
 	ReceiptDigest      string         `json:"receipt_digest"`
 	ReplayInputsDigest string         `json:"replay_inputs_digest"`
 	Engines            EngineVersions `json:"engines"`
+	RevocationEpoch    int64          `json:"revocation_epoch"`
 }
 
 type EnvelopeEntry struct {
@@ -302,12 +303,13 @@ func (uc *VerifyEvidenceBundle) Execute(ctx context.Context, bundle EvidenceBund
 			LogIncluded:    logIncluded,
 		}
 		policyInput := domain.PolicyInput{
-			Envelope:     env,
-			Verification: verification,
+			Envelope:         env,
+			Verification:     verification,
 			Options: &domain.PolicyOptions{
 				RequireProof: false,
 			},
-			Derivation: bundle.Receipt.Derivation,
+			Derivation:      bundle.Receipt.Derivation,
+			RevocationEpoch: bundle.RevocationEpoch,
 		}
 		eval, err := uc.Policy.Evaluate(ctx, policyInput)
 		if err != nil {
@@ -331,9 +333,10 @@ func (uc *VerifyEvidenceBundle) Execute(ctx context.Context, bundle EvidenceBund
 			addFailure(EvidenceFailDecisionEngineMissing)
 		} else {
 			decisionResult, err := uc.Decision.Evaluate(DecisionInput{
-				Verification: verification,
-				Derivation:   bundle.Derivation,
-				Policy:       eval.Result,
+				Verification:    verification,
+				Derivation:      bundle.Derivation,
+				Policy:          eval.Result,
+				RevocationEpoch: bundle.RevocationEpoch,
 			})
 			if err != nil {
 				return EvidenceVerificationResult{}, err
@@ -417,6 +420,7 @@ type replayInputs struct {
 	Policy     *replayInputsPolicy           `json:"policy,omitempty"`
 	Decision   domain.DecisionReceipt        `json:"decision,omitempty"`
 	Engines    EngineVersions                `json:"engines"`
+	RevocationEpoch int64                    `json:"revocation_epoch"`
 }
 
 type replayInputsProof struct {
@@ -448,6 +452,7 @@ func computeReplayInputsDigest(uc *VerifyEvidenceBundle, bundle EvidenceBundle) 
 		Derivation: bundle.Receipt.Derivation,
 		Decision:   bundle.Receipt.Decision,
 		Engines:    bundle.Engines,
+		RevocationEpoch: bundle.RevocationEpoch,
 		Proof: replayInputsProof{
 			STH: replayInputsSTH{
 				TenantID: sth.TenantID,

@@ -11,10 +11,12 @@ import (
 )
 
 type Log struct {
-	mu      sync.RWMutex
-	tenants map[string]*tenantState
-	clock   func() time.Time
-	signSTH func(domain.STH) ([]byte, error)
+	mu            sync.RWMutex
+	tenants       map[string]*tenantState
+	clock         func() time.Time
+	signSTH       func(domain.STH) ([]byte, error)
+	anchor        domain.AnchorService
+	anchorTimeout time.Duration
 }
 
 type tenantState struct {
@@ -46,13 +48,19 @@ func NewWithSigner(signSTH func(domain.STH) ([]byte, error)) *Log {
 }
 
 func NewWithSignerAndClock(signSTH func(domain.STH) ([]byte, error), clock func() time.Time) *Log {
+	return NewWithSignerClockAndAnchor(signSTH, clock, nil, 0)
+}
+
+func NewWithSignerClockAndAnchor(signSTH func(domain.STH) ([]byte, error), clock func() time.Time, anchorSvc domain.AnchorService, timeout time.Duration) *Log {
 	if clock == nil {
 		clock = time.Now
 	}
 	return &Log{
-		tenants: make(map[string]*tenantState),
-		clock:   clock,
-		signSTH: signSTH,
+		tenants:       make(map[string]*tenantState),
+		clock:         clock,
+		signSTH:       signSTH,
+		anchor:        anchorSvc,
+		anchorTimeout: timeout,
 	}
 }
 
@@ -65,11 +73,11 @@ func (l *Log) AppendLeaf(ctx context.Context, tenantID string, signedManifestID 
 	}
 
 	l.mu.Lock()
-	defer l.mu.Unlock()
 
 	state := l.ensureTenant(tenantID)
 	key := hex.EncodeToString(leafHash)
 	if receipt, ok := state.receipts[key]; ok {
+		l.mu.Unlock()
 		return receipt.leafIndex, cloneSTH(receipt.sth), cloneInclusion(receipt.inclusion), nil
 	}
 	index := int64(len(state.leaves))
@@ -79,11 +87,13 @@ func (l *Log) AppendLeaf(ctx context.Context, tenantID string, signedManifestID 
 	root, err := merkle.Root(state.leaves)
 	if err != nil {
 		state.leaves = state.leaves[:len(state.leaves)-1]
+		l.mu.Unlock()
 		return 0, domain.STH{}, domain.InclusionProof{}, err
 	}
 	path, err := merkle.InclusionProof(state.leaves, int(index))
 	if err != nil {
 		state.leaves = state.leaves[:len(state.leaves)-1]
+		l.mu.Unlock()
 		return 0, domain.STH{}, domain.InclusionProof{}, err
 	}
 
@@ -97,6 +107,7 @@ func (l *Log) AppendLeaf(ctx context.Context, tenantID string, signedManifestID 
 		sig, err := l.signSTH(sth)
 		if err != nil {
 			state.leaves = state.leaves[:len(state.leaves)-1]
+			l.mu.Unlock()
 			return 0, domain.STH{}, domain.InclusionProof{}, err
 		}
 		sth.Signature = sig
@@ -116,7 +127,9 @@ func (l *Log) AppendLeaf(ctx context.Context, tenantID string, signedManifestID 
 		sth:       sth,
 		inclusion: inclusion,
 	}
+	l.mu.Unlock()
 
+	l.anchorBestEffort(ctx, tenantID, sth)
 	return index, sth, inclusion, nil
 }
 
@@ -181,6 +194,19 @@ func (l *Log) GetLatestSTH(ctx context.Context, tenantID string) (domain.STH, er
 	sth := state.sth
 	l.mu.RUnlock()
 	return cloneSTH(sth), nil
+}
+
+func (l *Log) anchorBestEffort(ctx context.Context, tenantID string, sth domain.STH) {
+	if l.anchor == nil {
+		return
+	}
+	timeout := l.anchorTimeout
+	if timeout <= 0 {
+		timeout = 2 * time.Second
+	}
+	anchorCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	_, _ = l.anchor.AnchorSTH(anchorCtx, tenantID, sth)
 }
 
 func (l *Log) GetConsistencyProof(ctx context.Context, tenantID string, fromSize, toSize int64) (domain.ConsistencyProof, error) {

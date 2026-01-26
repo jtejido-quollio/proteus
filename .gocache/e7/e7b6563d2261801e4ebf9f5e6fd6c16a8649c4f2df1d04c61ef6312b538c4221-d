@@ -1,6 +1,0 @@
-./errors.go
-./keys.go
-./manifest.go
-./receipt.go
-./tenant.go
-./transparency_log.go

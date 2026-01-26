@@ -1,0 +1,15 @@
+{
+  "snapshot_id": "policy-snap-12",
+  "tenant_id": "tenant-1",
+  "bundle_id": "bundle-main",
+  "bundle_version": "12",
+  "created_at": "2026-01-26T03:00:00Z",
+  "hash": {
+    "alg": "sha256",
+    "value": "4444444444444444444444444444444444444444444444444444444444444444"
+  },
+  "contents": {
+    "opa_bundle_digest": "sha256:<...>",
+    "notes": "Snapshot at decision time"
+  }
+}

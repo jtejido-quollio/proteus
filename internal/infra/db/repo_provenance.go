@@ -156,3 +156,37 @@ func (r *ProvenanceRepository) ListGeneratedManifestIDs(ctx context.Context, ten
 	}
 	return manifestIDs, nil
 }
+
+func (r *ProvenanceRepository) GetArtifactByHash(ctx context.Context, tenantID string, hash domain.Hash) (*domain.Artifact, error) {
+	if r.db == nil {
+		return nil, errDBUnavailable
+	}
+	if tenantID == "" {
+		return nil, errors.New("tenant_id is required")
+	}
+	if hash.Alg == "" || hash.Value == "" {
+		return nil, errors.New("hash is required")
+	}
+
+	var model ArtifactModel
+	err := r.db.WithContext(ctx).
+		Where("tenant_id = ? AND hash_alg = ? AND hash_value = ?", tenantID, hash.Alg, hash.Value).
+		First(&model).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, err
+	}
+
+	artifact := domain.Artifact{
+		TenantID:  model.TenantID,
+		Hash:      domain.Hash{Alg: model.HashAlg, Value: model.HashValue},
+		MediaType: model.MediaType,
+		CreatedAt: model.CreatedAt,
+	}
+	if model.URI != nil {
+		artifact.URI = *model.URI
+	}
+	return &artifact, nil
+}

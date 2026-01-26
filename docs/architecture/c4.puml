@@ -1,0 +1,154 @@
+@startuml Phase4_CaseManagement_Services
+title Proteus Phase 4B — Case Management & Moderator Workflows (Services)
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam wrapWidth 220
+skinparam maxMessageSize 220
+skinparam ArrowColor #333333
+skinparam ComponentBorderColor #333333
+skinparam ComponentBackgroundColor #FAFAFA
+
+'========================
+' EXTERNAL ACTORS
+'========================
+actor "Reviewer\n(Trust & Safety)" as Reviewer
+actor "Legal / Compliance" as Legal
+actor "Auditor / Regulator" as Auditor
+actor "System Agent\n(Policy Engine)" as Agent
+actor "Downstream Consumer\n(Publisher / App)" as Consumer
+
+'========================
+' FRONTEND
+'========================
+component "Case Console UI\n(React + TypeScript)" as UI
+
+'========================
+' API GATEWAY / EDGE
+'========================
+component "API Gateway\n(AuthN/AuthZ, Rate Limit,\nRequest IDs)" as APIGW
+
+'========================
+' CORE BACKEND SERVICES
+'========================
+package "Phase 4 Services (Go)" {
+  component "Case API\n(Cases, Evidence,\nDecisions, Events)" as CaseAPI
+  component "Queue Service\n(Review Queues,\nAssignments, SLA Views)" as QueueSvc
+  component "Case Policy Service\n(Policy Snapshots,\nPolicy Change Events)" as PolicySvc
+  component "Human Actions Service\n(Overrides, Holds,\nEscalations, Rationales)" as HumanSvc
+  component "Export Service\n(JSON/PDF Evidence Pack,\nDeterministic Exports)" as ExportSvc
+  component "Workflow Service\n(Temporal Wrapper:\nSLA timers, escalations)" as WorkflowSvc
+  component "Notification Service\n(Email/Slack/Webhook)\n(optional)" as NotifySvc
+}
+
+'========================
+' EXISTING / UPSTREAM PROTEUS SERVICES (PRE-PHASE 4)
+'========================
+package "Proteus Core (existing)" {
+  component "Trustd API\n(Verify/Record,\nMerkle Log, Provenance)" as Trustd
+  component "Policy Engine\n(OPA / Rules)\n(Phase 2/3)" as PolicyEngine
+  component "Anchor Service\n(Blockchain/Notary)\n(optional)" as AnchorSvc
+}
+
+'========================
+' DATA STORES
+'========================
+database "Case DB\n(Postgres)\nappend-only tables:\n- cases\n- case_events\n- case_evidence\n- case_decisions\n- case_policy_snapshots\n- queue_entries\n- human_actions" as CaseDB
+
+database "Object Store\n(S3/GCS)\nEvidence blobs,\nPDF exports" as ObjStore
+
+queue "Temporal\n(Workflow Engine)" as Temporal
+
+queue "Event Bus\n(NATS/Kafka/Rabbit)\n(optional)\ncase.* events" as Bus
+
+component "Audit Log\n(Hash-chain / WORM)\n(optional hardening)" as WORM
+
+'========================
+' FLOWS: UI -> API
+'========================
+Reviewer --> UI : triage / review / decide
+Legal --> UI : holds / escalations / overrides
+Auditor --> UI : read-only access\n(export, timeline)
+
+UI --> APIGW : HTTPS (OIDC)\nX-Request-ID
+APIGW --> CaseAPI : REST/JSON
+APIGW --> QueueSvc : REST/JSON
+APIGW --> ExportSvc : REST/JSON
+APIGW --> HumanSvc : REST/JSON
+
+'========================
+' FLOWS: System -> Case Creation
+'========================
+Agent --> Trustd : record/verify\n(decision=require_review)
+Trustd --> CaseAPI : emit case trigger\n(case seed + evidence refs)\n(via Bus or direct)
+PolicyEngine --> CaseAPI : policy decision refs\n(policy_id, policy_hash)
+
+'========================
+' INTERNAL SERVICE COLLAB
+'========================
+CaseAPI --> CaseDB : append events/evidence/decisions
+HumanSvc --> CaseDB : append human action events
+QueueSvc --> CaseDB : materialize queues\n(assignments, SLA state)
+PolicySvc --> CaseDB : policy snapshots\n(policy change events)
+
+'========================
+' WORKFLOWS (TEMPORAL WRAPPER)
+'========================
+WorkflowSvc --> Temporal : start workflows\nSLA timers, escalations
+Temporal --> WorkflowSvc : callbacks/activities\n(deadlines breached)
+WorkflowSvc --> QueueSvc : update SLA events\n/escalate routing
+WorkflowSvc --> HumanSvc : record escalation event
+WorkflowSvc --> NotifySvc : notify assigned owners\n(optional)
+
+'========================
+' EXPORTS
+'========================
+ExportSvc --> CaseDB : read full timeline\n(evidence + policy snapshots)
+ExportSvc --> ObjStore : write PDF/JSON pack
+ExportSvc --> WORM : (optional) write export hash\nand manifest
+ExportSvc --> CaseAPI : append export event\n(export_hash, uri)
+
+'========================
+' EVIDENCE LINKING TO CORE
+'========================
+CaseAPI --> Trustd : fetch verification receipts\n/derivation graphs (read-only)
+CaseAPI --> AnchorSvc : fetch anchor receipts\n(read-only)
+
+'========================
+' DOWNSTREAM ENFORCEMENT
+'========================
+Consumer --> APIGW : check case status\nbefore publish/use
+APIGW --> CaseAPI : read case state\n(holds/closed)
+
+'========================
+' OPTIONAL EVENTING
+'========================
+CaseAPI --> Bus : publish case.created\ncase.updated\nqueue.changed
+HumanSvc --> Bus : publish case.action.*
+QueueSvc --> Bus : publish queue.entry.*
+PolicySvc --> Bus : publish policy.changed
+
+'========================
+' SECURITY / INTEGRITY NOTES
+'========================
+note right of CaseDB
+Append-only discipline:
+- no UPDATE/DELETE for evidence/decisions/events
+- state transitions are events
+- current state is a projection
+end note
+
+note right of WorkflowSvc
+Temporal is execution engine only.
+Business truth lives in CaseDB.
+Workflows must be replayable.
+end note
+
+note bottom of ExportSvc
+Exports are court/regulator-grade:
+- deterministic content
+- stable export_hash
+- includes policy snapshot hash
+end note
+
+@enduml

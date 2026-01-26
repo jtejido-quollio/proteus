@@ -1,7 +1,41 @@
-# Trust Infrastructure
+# PROTEUS
 
-This repository is a Phase 0 (spec-first) scaffold for a Trust Infrastructure:
-**Authenticity, Provenance, and AI Forensics** via cryptographic proofs and a per-tenant transparency log.
+PROTEUS is a **standalone enterprise forensics platform** for proving
+**what happened, when it happened, who/what produced it, and whether it was altered**.
+
+It is designed for **post-incident proof**, disputes, audits, investigations, and regulatory scrutiny.
+
+PROTEUS does not control execution.
+PROTEUS does not enforce policy at runtime.
+PROTEUS produces **cryptographic evidence** that survives adversarial review.
+
+---
+
+## What PROTEUS Solves
+
+Modern systems — AI or otherwise — generate outputs that later become disputed:
+- “Was this document altered?”
+- “Did this model really produce this output?”
+- “What inputs, tools, and versions were involved?”
+- “Can a third party verify this without trusting our internal systems?”
+
+Traditional logs are mutable.
+Detection systems are probabilistic.
+Dashboards are not evidence.
+
+PROTEUS provides **forensics-grade proof**.
+
+---
+
+## Core Guarantees (Non-Negotiable)
+
+- Deterministic verification (same inputs → same result)
+- Tamper-evident recording (append-only, cryptographically verifiable)
+- Portable, offline verification (no vendor dependency)
+- Explicit key lifecycle and revocation
+- Legal-grade chain of custody
+
+---
 
 ## Stack
 - Go

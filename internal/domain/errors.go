@@ -4,6 +4,7 @@ import "errors"
 
 var (
 	ErrUnauthorized         = errors.New("unauthorized")
+	ErrForbidden            = errors.New("forbidden")
 	ErrInvalidManifest      = errors.New("invalid manifest")
 	ErrSignatureInvalid     = errors.New("signature invalid")
 	ErrKeyRevoked           = errors.New("key revoked")

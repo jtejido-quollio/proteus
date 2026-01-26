@@ -28,6 +28,7 @@ type BundleInput struct {
 	SigningKeys     []domain.SigningKey
 	LogKeys         []domain.SigningKey
 	Revocations     []domain.Revocation
+	RevocationEpoch int64
 }
 
 type ProofInput struct {
@@ -49,6 +50,7 @@ type EvidenceBundle struct {
 	ReceiptDigest      string            `json:"receipt_digest"`
 	ReplayInputsDigest string            `json:"replay_inputs_digest"`
 	Engines            replay.EngineVersions `json:"engines"`
+	RevocationEpoch    int64             `json:"revocation_epoch"`
 }
 
 type EvidenceKeys struct {
@@ -228,6 +230,7 @@ func BuildEvidenceBundle(input BundleInput) (EvidenceBundle, error) {
 		ReceiptDigest:      receiptDigest,
 		ReplayInputsDigest: replayDigest,
 		Engines:            applyDefaultEngines(input.Engines),
+		RevocationEpoch:    input.RevocationEpoch,
 	}
 	return bundle, nil
 }
@@ -469,6 +472,7 @@ func computeReplayInputsDigest(input BundleInput, receipt Receipt) (string, erro
 		PolicyEvaluation: policyEval,
 		DecisionResult:   decision,
 		Engines:          input.Engines,
+		RevocationEpoch:  input.RevocationEpoch,
 	})
 	if err != nil {
 		return "", err

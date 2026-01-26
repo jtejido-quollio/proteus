@@ -1,0 +1,42 @@
+{
+  "pack_version": "v1",
+  "pack_id": "pack_01HZZZZZZZZZZZZZZZZZZZZZZZ",
+  "generated_at": "2026-01-26T03:00:00Z",
+  "generated_by": {
+    "principal_hash": "<sha256>",
+    "principal_type": "user",
+    "display": "reviewer-1"
+  },
+  "tenant_id": "tenant-1",
+  "case_id": "case-123",
+  "files": [
+    {
+      "path": "manifest.json",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "bytes": 1234,
+      "content_type": "application/json",
+      "role": "manifest"
+    },
+    {
+      "path": "case/case.export.json",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "bytes": 2345,
+      "content_type": "application/json",
+      "role": "case"
+    },
+    {
+      "path": "audit/events.ndjson",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "bytes": 3456,
+      "content_type": "application/x-ndjson",
+      "role": "audit"
+    },
+    {
+      "path": "signatures.json",
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "bytes": 456,
+      "content_type": "application/json",
+      "role": "signature"
+    }
+  ]
+}

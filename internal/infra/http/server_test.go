@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -199,6 +200,7 @@ func TestRecordEndpoint_Success(t *testing.T) {
 			env.Manifest.TenantID + ":" + env.Signature.KID: {
 				TenantID:  env.Manifest.TenantID,
 				KID:       env.Signature.KID,
+				Purpose:   domain.KeyPurposeSigning,
 				Alg:       keys.Alg,
 				PublicKey: pubKey,
 				Status:    domain.KeyStatusActive,
@@ -225,7 +227,7 @@ func TestRecordEndpoint_Success(t *testing.T) {
 		Crypto: cryptoSvc,
 	}
 
-	server := NewServerWithDeps(config.Config{}, ServerDeps{
+	server := NewServerWithDeps(config.Config{AuthMode: "none"}, ServerDeps{
 		Record: recordUC,
 	})
 
@@ -253,9 +255,418 @@ func TestRecordEndpoint_Success(t *testing.T) {
 	}
 }
 
+type stubRateLimiter struct {
+	decision domain.RateLimitDecision
+	err      error
+	keys     []string
+	limit    int
+	window   time.Duration
+}
+
+func (s *stubRateLimiter) Allow(_ context.Context, key string, limit int, window time.Duration) (domain.RateLimitDecision, error) {
+	s.keys = append(s.keys, key)
+	s.limit = limit
+	s.window = window
+	return s.decision, s.err
+}
+
+func TestRateLimit_RecordEndpoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	keys := loadKeys(t)
+	seed := decodeHex(t, keys.SeedHex)
+	privKey := ed25519.NewKeyFromSeed(seed)
+	pubKey := privKey.Public().(ed25519.PublicKey)
+
+	keyRepo := &staticKeyRepo{
+		keys: map[string]domain.SigningKey{
+			keys.TenantID + ":" + keys.KID: {
+				TenantID:  keys.TenantID,
+				KID:       keys.KID,
+				Purpose:   domain.KeyPurposeSigning,
+				Alg:       keys.Alg,
+				PublicKey: pubKey,
+				Status:    domain.KeyStatusActive,
+			},
+		},
+		revoked: map[string]bool{},
+	}
+
+	cryptoSvc := &crypto.Service{}
+	log := logmem.NewWithSignerAndClock(func(sth domain.STH) ([]byte, error) {
+		canonical, err := cryptoSvc.CanonicalizeSTH(sth)
+		if err != nil {
+			return nil, err
+		}
+		return ed25519.Sign(privKey, canonical), nil
+	}, func() time.Time {
+		return time.Date(2026, 1, 12, 5, 0, 0, 0, time.UTC)
+	})
+
+	recordUC := &usecase.RecordSignedManifest{
+		Keys:   keyRepo,
+		Manif:  &memoryManifestRepo{},
+		Log:    log,
+		Crypto: cryptoSvc,
+	}
+
+	limiter := &stubRateLimiter{
+		decision: domain.RateLimitDecision{
+			Allowed:   false,
+			Limit:     1,
+			Remaining: 0,
+			ResetAt:   time.Unix(123, 0),
+		},
+	}
+
+	server := NewServerWithDeps(config.Config{
+		AuthMode:                "oidc",
+		RateLimitRequests:       1,
+		RateLimitWindowSeconds:  60,
+		RateLimitIncludeSubject: true,
+	}, ServerDeps{
+		Record:        recordUC,
+		Authenticator: &staticAuthenticator{scopes: []string{"manifests:record"}},
+		Authorizer:    &allowAuthorizer{},
+		RateLimiter:   limiter,
+	})
+
+	body := readVectorFile(t, "envelope_1.json")
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/manifests:record", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	addAuthHeader(req, keys.TenantID)
+	server.r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d", w.Code)
+	}
+	if got := w.Header().Get("RateLimit-Limit"); got != "1" {
+		t.Fatalf("expected RateLimit-Limit 1, got %s", got)
+	}
+	if got := w.Header().Get("RateLimit-Remaining"); got != "0" {
+		t.Fatalf("expected RateLimit-Remaining 0, got %s", got)
+	}
+	if got := w.Header().Get("RateLimit-Reset"); got != "123" {
+		t.Fatalf("expected RateLimit-Reset 123, got %s", got)
+	}
+	if len(limiter.keys) != 1 {
+		t.Fatalf("expected limiter to be called once, got %d", len(limiter.keys))
+	}
+	if !strings.Contains(limiter.keys[0], "tenant:"+keys.TenantID) {
+		t.Fatalf("expected tenant in rate limit key, got %s", limiter.keys[0])
+	}
+	if !strings.Contains(limiter.keys[0], "subject:test-subject") {
+		t.Fatalf("expected subject in rate limit key, got %s", limiter.keys[0])
+	}
+}
+
+func TestRateLimit_FailClosed_WhenLimiterErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	keys := loadKeys(t)
+	seed := decodeHex(t, keys.SeedHex)
+	privKey := ed25519.NewKeyFromSeed(seed)
+	pubKey := privKey.Public().(ed25519.PublicKey)
+
+	keyRepo := &staticKeyRepo{
+		keys: map[string]domain.SigningKey{
+			keys.TenantID + ":" + keys.KID: {
+				TenantID:  keys.TenantID,
+				KID:       keys.KID,
+				Purpose:   domain.KeyPurposeSigning,
+				Alg:       keys.Alg,
+				PublicKey: pubKey,
+				Status:    domain.KeyStatusActive,
+			},
+		},
+		revoked: map[string]bool{},
+	}
+
+	cryptoSvc := &crypto.Service{}
+	log := logmem.NewWithSignerAndClock(func(sth domain.STH) ([]byte, error) {
+		canonical, err := cryptoSvc.CanonicalizeSTH(sth)
+		if err != nil {
+			return nil, err
+		}
+		return ed25519.Sign(privKey, canonical), nil
+	}, func() time.Time {
+		return time.Date(2026, 1, 12, 5, 0, 0, 0, time.UTC)
+	})
+
+	recordUC := &usecase.RecordSignedManifest{
+		Keys:   keyRepo,
+		Manif:  &memoryManifestRepo{},
+		Log:    log,
+		Crypto: cryptoSvc,
+	}
+
+	limiter := &stubRateLimiter{
+		err: errors.New("rate limiter unavailable"),
+	}
+
+	server := NewServerWithDeps(config.Config{
+		AuthMode:                "oidc",
+		RateLimitRequests:       1,
+		RateLimitWindowSeconds:  60,
+		RateLimitIncludeSubject: true,
+		RateLimitFailClosed:     true,
+	}, ServerDeps{
+		Record:        recordUC,
+		Authenticator: &staticAuthenticator{scopes: []string{"manifests:record"}},
+		Authorizer:    &allowAuthorizer{},
+		RateLimiter:   limiter,
+	})
+
+	body := readVectorFile(t, "envelope_1.json")
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/manifests:record", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	addAuthHeader(req, keys.TenantID)
+	server.r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d: %s", w.Code, strings.TrimSpace(w.Body.String()))
+	}
+	assertErrorCode(t, w.Body.Bytes(), "RATE_LIMIT_UNAVAILABLE")
+}
+
+func TestRateLimit_FailOpen_WhenLimiterErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	keys := loadKeys(t)
+	seed := decodeHex(t, keys.SeedHex)
+	privKey := ed25519.NewKeyFromSeed(seed)
+	pubKey := privKey.Public().(ed25519.PublicKey)
+
+	keyRepo := &staticKeyRepo{
+		keys: map[string]domain.SigningKey{
+			keys.TenantID + ":" + keys.KID: {
+				TenantID:  keys.TenantID,
+				KID:       keys.KID,
+				Purpose:   domain.KeyPurposeSigning,
+				Alg:       keys.Alg,
+				PublicKey: pubKey,
+				Status:    domain.KeyStatusActive,
+			},
+		},
+		revoked: map[string]bool{},
+	}
+
+	cryptoSvc := &crypto.Service{}
+	log := logmem.NewWithSignerAndClock(func(sth domain.STH) ([]byte, error) {
+		canonical, err := cryptoSvc.CanonicalizeSTH(sth)
+		if err != nil {
+			return nil, err
+		}
+		return ed25519.Sign(privKey, canonical), nil
+	}, func() time.Time {
+		return time.Date(2026, 1, 12, 5, 0, 0, 0, time.UTC)
+	})
+
+	recordUC := &usecase.RecordSignedManifest{
+		Keys:   keyRepo,
+		Manif:  &memoryManifestRepo{},
+		Log:    log,
+		Crypto: cryptoSvc,
+	}
+
+	limiter := &stubRateLimiter{
+		err: errors.New("rate limiter unavailable"),
+	}
+
+	server := NewServerWithDeps(config.Config{
+		AuthMode:                "oidc",
+		RateLimitRequests:       1,
+		RateLimitWindowSeconds:  60,
+		RateLimitIncludeSubject: true,
+		RateLimitFailClosed:     false,
+	}, ServerDeps{
+		Record:        recordUC,
+		Authenticator: &staticAuthenticator{scopes: []string{"manifests:record"}},
+		Authorizer:    &allowAuthorizer{},
+		RateLimiter:   limiter,
+	})
+
+	body := readVectorFile(t, "envelope_1.json")
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/manifests:record", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	addAuthHeader(req, keys.TenantID)
+	server.r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 (fail-open), got %d: %s", w.Code, strings.TrimSpace(w.Body.String()))
+	}
+}
+
+func TestRateLimit_RecordEndpoint_SubjectHash(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	keys := loadKeys(t)
+	seed := decodeHex(t, keys.SeedHex)
+	privKey := ed25519.NewKeyFromSeed(seed)
+	pubKey := privKey.Public().(ed25519.PublicKey)
+
+	keyRepo := &staticKeyRepo{
+		keys: map[string]domain.SigningKey{
+			keys.TenantID + ":" + keys.KID: {
+				TenantID:  keys.TenantID,
+				KID:       keys.KID,
+				Purpose:   domain.KeyPurposeSigning,
+				Alg:       keys.Alg,
+				PublicKey: pubKey,
+				Status:    domain.KeyStatusActive,
+			},
+		},
+		revoked: map[string]bool{},
+	}
+
+	cryptoSvc := &crypto.Service{}
+	log := logmem.NewWithSignerAndClock(func(sth domain.STH) ([]byte, error) {
+		canonical, err := cryptoSvc.CanonicalizeSTH(sth)
+		if err != nil {
+			return nil, err
+		}
+		return ed25519.Sign(privKey, canonical), nil
+	}, func() time.Time {
+		return time.Date(2026, 1, 12, 5, 0, 0, 0, time.UTC)
+	})
+
+	recordUC := &usecase.RecordSignedManifest{
+		Keys:   keyRepo,
+		Manif:  &memoryManifestRepo{},
+		Log:    log,
+		Crypto: cryptoSvc,
+	}
+
+	limiter := &stubRateLimiter{
+		decision: domain.RateLimitDecision{
+			Allowed:   false,
+			Limit:     1,
+			Remaining: 0,
+			ResetAt:   time.Unix(123, 0),
+		},
+	}
+
+	server := NewServerWithDeps(config.Config{
+		AuthMode:                "oidc",
+		RateLimitRequests:       1,
+		RateLimitWindowSeconds:  60,
+		RateLimitIncludeSubject: true,
+		RateLimitSubjectMaxLen:  128,
+		RateLimitSubjectHash:    true,
+	}, ServerDeps{
+		Record:        recordUC,
+		Authenticator: &staticAuthenticator{scopes: []string{"manifests:record"}},
+		Authorizer:    &allowAuthorizer{},
+		RateLimiter:   limiter,
+	})
+
+	body := readVectorFile(t, "envelope_1.json")
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/manifests:record", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	addAuthHeader(req, keys.TenantID)
+	server.r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d", w.Code)
+	}
+	if len(limiter.keys) != 1 {
+		t.Fatalf("expected limiter to be called once, got %d", len(limiter.keys))
+	}
+
+	key := limiter.keys[0]
+	if !strings.Contains(key, "tenant:"+keys.TenantID) {
+		t.Fatalf("expected tenant in rate limit key, got %s", key)
+	}
+	if strings.Contains(key, "subject:test-subject") {
+		t.Fatalf("expected plain subject NOT in key when hashing enabled, got %s", key)
+	}
+	if !strings.Contains(key, "subject_hash:") {
+		t.Fatalf("expected subject_hash in key, got %s", key)
+	}
+}
+
+func TestRateLimit_RecordEndpoint_SubjectOmitted_WhenTooLong(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	keys := loadKeys(t)
+	seed := decodeHex(t, keys.SeedHex)
+	privKey := ed25519.NewKeyFromSeed(seed)
+	pubKey := privKey.Public().(ed25519.PublicKey)
+
+	keyRepo := &staticKeyRepo{
+		keys: map[string]domain.SigningKey{
+			keys.TenantID + ":" + keys.KID: {
+				TenantID:  keys.TenantID,
+				KID:       keys.KID,
+				Purpose:   domain.KeyPurposeSigning,
+				Alg:       keys.Alg,
+				PublicKey: pubKey,
+				Status:    domain.KeyStatusActive,
+			},
+		},
+		revoked: map[string]bool{},
+	}
+
+	cryptoSvc := &crypto.Service{}
+	log := logmem.NewWithSignerAndClock(func(sth domain.STH) ([]byte, error) {
+		canonical, err := cryptoSvc.CanonicalizeSTH(sth)
+		if err != nil {
+			return nil, err
+		}
+		return ed25519.Sign(privKey, canonical), nil
+	}, func() time.Time {
+		return time.Date(2026, 1, 12, 5, 0, 0, 0, time.UTC)
+	})
+
+	recordUC := &usecase.RecordSignedManifest{
+		Keys:   keyRepo,
+		Manif:  &memoryManifestRepo{},
+		Log:    log,
+		Crypto: cryptoSvc,
+	}
+
+	limiter := &stubRateLimiter{
+		decision: domain.RateLimitDecision{
+			Allowed:   false,
+			Limit:     1,
+			Remaining: 0,
+			ResetAt:   time.Unix(123, 0),
+		},
+	}
+
+	// This relies on your staticAuthenticator using "test-subject". We set MaxLen so low it must be omitted.
+	server := NewServerWithDeps(config.Config{
+		AuthMode:                "oidc",
+		RateLimitRequests:       1,
+		RateLimitWindowSeconds:  60,
+		RateLimitIncludeSubject: true,
+		RateLimitSubjectMaxLen:  1,
+		RateLimitSubjectHash:    false,
+	}, ServerDeps{
+		Record:        recordUC,
+		Authenticator: &staticAuthenticator{scopes: []string{"manifests:record"}},
+		Authorizer:    &allowAuthorizer{},
+		RateLimiter:   limiter,
+	})
+
+	body := readVectorFile(t, "envelope_1.json")
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/manifests:record", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	addAuthHeader(req, keys.TenantID)
+	server.r.ServeHTTP(w, req)
+
+	if len(limiter.keys) != 1 {
+		t.Fatalf("expected limiter to be called once, got %d", len(limiter.keys))
+	}
+	key := limiter.keys[0]
+	if strings.Contains(key, "subject:") || strings.Contains(key, "subject_hash:") {
+		t.Fatalf("expected subject omitted when too long, got %s", key)
+	}
+}
+
 func TestRecordEndpoint_InvalidJSON(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	server := NewServerWithDeps(config.Config{}, ServerDeps{
+	server := NewServerWithDeps(config.Config{AuthMode: "none"}, ServerDeps{
 		Record: &usecase.RecordSignedManifest{},
 	})
 	w := httptest.NewRecorder()
@@ -279,6 +690,7 @@ func TestVerifyEndpoint_SuccessWithProof(t *testing.T) {
 			env.Manifest.TenantID + ":" + env.Signature.KID: {
 				TenantID:  env.Manifest.TenantID,
 				KID:       env.Signature.KID,
+				Purpose:   domain.KeyPurposeSigning,
 				Alg:       keys.Alg,
 				PublicKey: pubKey,
 				Status:    domain.KeyStatusActive,
@@ -291,6 +703,7 @@ func TestVerifyEndpoint_SuccessWithProof(t *testing.T) {
 		key: domain.SigningKey{
 			TenantID:  env.Manifest.TenantID,
 			KID:       keys.KID,
+			Purpose:   domain.KeyPurposeLog,
 			Alg:       keys.Alg,
 			PublicKey: pubKey,
 			Status:    domain.KeyStatusActive,
@@ -304,7 +717,7 @@ func TestVerifyEndpoint_SuccessWithProof(t *testing.T) {
 		Merkle:  &merkle.Service{},
 	}
 
-	server := NewServerWithDeps(config.Config{}, ServerDeps{
+	server := NewServerWithDeps(config.Config{AuthMode: "none"}, ServerDeps{
 		Verify: verifyUC,
 	})
 
@@ -346,6 +759,7 @@ func TestVerifyEndpoint_Failures(t *testing.T) {
 			env.Manifest.TenantID + ":" + env.Signature.KID: {
 				TenantID:  env.Manifest.TenantID,
 				KID:       env.Signature.KID,
+				Purpose:   domain.KeyPurposeSigning,
 				Alg:       keys.Alg,
 				PublicKey: pubKey,
 				Status:    domain.KeyStatusActive,
@@ -357,6 +771,7 @@ func TestVerifyEndpoint_Failures(t *testing.T) {
 		key: domain.SigningKey{
 			TenantID:  env.Manifest.TenantID,
 			KID:       keys.KID,
+			Purpose:   domain.KeyPurposeLog,
 			Alg:       keys.Alg,
 			PublicKey: pubKey,
 			Status:    domain.KeyStatusActive,
@@ -368,7 +783,7 @@ func TestVerifyEndpoint_Failures(t *testing.T) {
 		Crypto:  &crypto.Service{},
 		Merkle:  &merkle.Service{},
 	}
-	server := NewServerWithDeps(config.Config{}, ServerDeps{
+	server := NewServerWithDeps(config.Config{AuthMode: "none"}, ServerDeps{
 		Verify: verifyUC,
 	})
 
@@ -405,7 +820,7 @@ func TestVerifyEndpoint_Failures(t *testing.T) {
 			Crypto:  &crypto.Service{},
 			Merkle:  &merkle.Service{},
 		}
-		badServer := NewServerWithDeps(config.Config{}, ServerDeps{Verify: badVerify})
+		badServer := NewServerWithDeps(config.Config{AuthMode: "none"}, ServerDeps{Verify: badVerify})
 		body, _ := json.Marshal(reqBody)
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/v1/manifests:verify", bytes.NewReader(body))
@@ -423,6 +838,7 @@ func TestVerifyEndpoint_Failures(t *testing.T) {
 				env.Manifest.TenantID + ":" + env.Signature.KID: {
 					TenantID:  env.Manifest.TenantID,
 					KID:       env.Signature.KID,
+					Purpose:   domain.KeyPurposeSigning,
 					Alg:       keys.Alg,
 					PublicKey: pubKey,
 					Status:    domain.KeyStatusActive,
@@ -438,7 +854,7 @@ func TestVerifyEndpoint_Failures(t *testing.T) {
 			Crypto:  &crypto.Service{},
 			Merkle:  &merkle.Service{},
 		}
-		badServer := NewServerWithDeps(config.Config{}, ServerDeps{Verify: badVerify})
+		badServer := NewServerWithDeps(config.Config{AuthMode: "none"}, ServerDeps{Verify: badVerify})
 		body, _ := json.Marshal(reqBody)
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/v1/manifests:verify", bytes.NewReader(body))
@@ -526,6 +942,7 @@ func TestKeyDiscoveryEndpoints(t *testing.T) {
 	key := domain.SigningKey{
 		TenantID:  keys.TenantID,
 		KID:       keys.KID,
+		Purpose:   domain.KeyPurposeSigning,
 		Alg:       keys.Alg,
 		PublicKey: pubKey,
 		Status:    domain.KeyStatusActive,
@@ -535,7 +952,7 @@ func TestKeyDiscoveryEndpoints(t *testing.T) {
 		t.Fatalf("create key: %v", err)
 	}
 
-	server := NewServerWithDeps(config.Config{}, ServerDeps{
+	server := NewServerWithDeps(config.Config{AuthMode: "none"}, ServerDeps{
 		SigningKeys: keyStore,
 		LogKeys:     keyStore,
 	})
@@ -557,7 +974,7 @@ func TestKeyDiscoveryEndpoints(t *testing.T) {
 
 func TestAdminEndpoints_Unauthorized(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	server := NewServerWithDeps(config.Config{}, ServerDeps{
+	server := NewServerWithDeps(config.Config{AuthMode: "none"}, ServerDeps{
 		AdminAPIKey: "secret",
 		Tenants:     &memTenantStore{},
 	})
@@ -577,7 +994,7 @@ func TestAdminEndpoints_Authorized(t *testing.T) {
 	tenantStore := &memTenantStore{}
 	keyStore := &memKeyStore{}
 	revocations := &memRevocationStore{}
-	server := NewServerWithDeps(config.Config{}, ServerDeps{
+	server := NewServerWithDeps(config.Config{AuthMode: "none"}, ServerDeps{
 		AdminAPIKey: "secret",
 		Tenants:     tenantStore,
 		SigningKeys: keyStore,
@@ -620,6 +1037,84 @@ func TestAdminEndpoints_Authorized(t *testing.T) {
 	}
 }
 
+func TestTenantEndpoints_RequireAuth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	env := loadEnvelope(t, "envelope_1.json")
+	recordBody, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal record body: %v", err)
+	}
+	verifyBody, err := json.Marshal(verifyRequest{Envelope: env})
+	if err != nil {
+		t.Fatalf("marshal verify body: %v", err)
+	}
+
+	server := NewServerWithDeps(config.Config{AuthMode: "oidc"}, ServerDeps{
+		Record:        &usecase.RecordSignedManifest{},
+		Verify:        &usecase.VerifySignedManifest{},
+		Log:           logmem.New(),
+		Provenance:    &usecase.ProvenanceQuery{},
+		SigningKeys:   &memKeyStore{},
+		LogKeys:       &memKeyStore{},
+		Authenticator: &staticAuthenticator{},
+		Authorizer:    &allowAuthorizer{},
+	})
+
+	tenantID := env.Manifest.TenantID
+	hash := env.Manifest.Subject.Hash.Value
+	leafHash := strings.Repeat("a", 64)
+	manifestID := env.Manifest.ManifestID
+
+	cases := []struct {
+		name        string
+		method      string
+		path        string
+		body        []byte
+		contentType string
+	}{
+		{"record", http.MethodPost, "/v1/manifests:record", recordBody, "application/json"},
+		{"verify", http.MethodPost, "/v1/manifests:verify", verifyBody, "application/json"},
+		{"lineage", http.MethodGet, "/v1/lineage/" + hash, nil, ""},
+		{"derivation", http.MethodGet, "/v1/derivation/" + manifestID, nil, ""},
+		{"keys signing", http.MethodGet, "/v1/tenants/" + tenantID + "/keys/signing", nil, ""},
+		{"keys log", http.MethodGet, "/v1/tenants/" + tenantID + "/keys/log", nil, ""},
+		{"sth latest", http.MethodGet, "/v1/logs/" + tenantID + "/sth/latest", nil, ""},
+		{"inclusion", http.MethodGet, "/v1/logs/" + tenantID + "/inclusion/" + leafHash, nil, ""},
+		{"consistency", http.MethodGet, "/v1/logs/" + tenantID + "/consistency?from=1&to=2", nil, ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(tc.method, tc.path, bytes.NewReader(tc.body))
+			if tc.contentType != "" {
+				req.Header.Set("Content-Type", tc.contentType)
+			}
+			server.r.ServeHTTP(w, req)
+			if w.Code != http.StatusUnauthorized {
+				t.Fatalf("expected 401, got %d", w.Code)
+			}
+			assertErrorCode(t, w.Body.Bytes(), "UNAUTHORIZED")
+		})
+	}
+}
+
+func TestAuthFailClosed_InvalidOIDCConfig(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	env := loadEnvelope(t, "envelope_1.json")
+	server := NewServerWithDeps(config.Config{AuthMode: "oidc"}, ServerDeps{
+		Provenance: &usecase.ProvenanceQuery{},
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/lineage/"+env.Manifest.Subject.Hash.Value, nil)
+	server.r.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+	assertErrorCode(t, w.Body.Bytes(), "AUTH_CONFIG_ERROR")
+}
+
 func TestManifestNoRouteDispatch(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	env := loadEnvelope(t, "envelope_1.json")
@@ -633,6 +1128,7 @@ func TestManifestNoRouteDispatch(t *testing.T) {
 			env.Manifest.TenantID + ":" + env.Signature.KID: {
 				TenantID:  env.Manifest.TenantID,
 				KID:       env.Signature.KID,
+				Purpose:   domain.KeyPurposeSigning,
 				Alg:       keys.Alg,
 				PublicKey: pubKey,
 				Status:    domain.KeyStatusActive,
@@ -644,6 +1140,7 @@ func TestManifestNoRouteDispatch(t *testing.T) {
 		key: domain.SigningKey{
 			TenantID:  env.Manifest.TenantID,
 			KID:       keys.KID,
+			Purpose:   domain.KeyPurposeLog,
 			Alg:       keys.Alg,
 			PublicKey: pubKey,
 			Status:    domain.KeyStatusActive,
@@ -674,7 +1171,7 @@ func TestManifestNoRouteDispatch(t *testing.T) {
 		Merkle:  &merkle.Service{},
 	}
 
-	server := NewServerWithDeps(config.Config{}, ServerDeps{
+	server := NewServerWithDeps(config.Config{AuthMode: "none"}, ServerDeps{
 		Record: recordUC,
 		Verify: verifyUC,
 	})
@@ -742,7 +1239,7 @@ func TestLogEndpoints(t *testing.T) {
 		t.Fatalf("append leaf2: %v", err)
 	}
 
-	server := NewServerWithDeps(config.Config{}, ServerDeps{
+	server := NewServerWithDeps(config.Config{AuthMode: "none"}, ServerDeps{
 		Log: log,
 	})
 

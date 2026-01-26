@@ -27,7 +27,7 @@ func TestTenantRepository_CreateGet(t *testing.T) {
 
 	repo := NewTenantRepository(db)
 	tenantID := mustUUID(t)
-	now := time.Now().UTC().Truncate(time.Second)
+	now := time.Date(2026, 1, 22, 16, 0, 0, 0, time.UTC)
 	tenant := domain.Tenant{
 		ID:        tenantID,
 		Name:      "tenant-" + tenantID[:8],
@@ -40,7 +40,7 @@ func TestTenantRepository_CreateGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get tenant: %v", err)
 	}
-	if !reflect.DeepEqual(tenant, *got) {
+	if tenant.ID != got.ID || tenant.Name != got.Name || !tenant.CreatedAt.Equal(got.CreatedAt) {
 		t.Fatal("tenant mismatch")
 	}
 }
@@ -57,6 +57,7 @@ func TestSigningKeyRepository_GetList(t *testing.T) {
 		ID:        keyID,
 		TenantID:  tenantID,
 		KID:       "kid-1",
+		Purpose:   string(domain.KeyPurposeSigning),
 		Alg:       "ed25519",
 		PublicKey: bytes.Repeat([]byte{0x01}, 32),
 		Status:    string(domain.KeyStatusActive),
@@ -95,6 +96,7 @@ func TestLogKeyRepository_GetActiveList(t *testing.T) {
 		ID:        mustUUID(t),
 		TenantID:  tenantID,
 		KID:       "kid-old",
+		Purpose:   string(domain.KeyPurposeLog),
 		Alg:       "ed25519",
 		PublicKey: bytes.Repeat([]byte{0x02}, 32),
 		Status:    string(domain.KeyStatusActive),
@@ -104,6 +106,7 @@ func TestLogKeyRepository_GetActiveList(t *testing.T) {
 		ID:        mustUUID(t),
 		TenantID:  tenantID,
 		KID:       "kid-new",
+		Purpose:   string(domain.KeyPurposeLog),
 		Alg:       "ed25519",
 		PublicKey: bytes.Repeat([]byte{0x03}, 32),
 		Status:    string(domain.KeyStatusActive),
@@ -113,6 +116,7 @@ func TestLogKeyRepository_GetActiveList(t *testing.T) {
 		ID:        mustUUID(t),
 		TenantID:  tenantID,
 		KID:       "kid-retired",
+		Purpose:   string(domain.KeyPurposeLog),
 		Alg:       "ed25519",
 		PublicKey: bytes.Repeat([]byte{0x04}, 32),
 		Status:    string(domain.KeyStatusRetired),
@@ -428,8 +432,29 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
+	lockTestDB(t, db)
 	applyMigrations(t, db)
 	return db
+}
+
+func lockTestDB(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get sql db: %v", err)
+	}
+	conn, err := sqlDB.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("open db conn: %v", err)
+	}
+	if _, err := conn.ExecContext(context.Background(), "SELECT pg_advisory_lock(987654321)"); err != nil {
+		_ = conn.Close()
+		t.Fatalf("acquire db lock: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = conn.ExecContext(context.Background(), "SELECT pg_advisory_unlock(987654321)")
+		_ = conn.Close()
+	})
 }
 
 func applyMigrations(t *testing.T, db *gorm.DB) {
@@ -472,7 +497,12 @@ func resetDB(t *testing.T, db *gorm.DB) {
 			transparency_log_leaves,
 			tree_heads,
 			artifacts,
-			provenance_edges
+			provenance_edges,
+			audit_events,
+			tenant_audit_seq,
+			tenant_revocation_epoch,
+			anchor_receipts,
+			anchor_attempts
 		RESTART IDENTITY CASCADE`).Error; err != nil {
 		t.Fatalf("truncate tables: %v", err)
 	}

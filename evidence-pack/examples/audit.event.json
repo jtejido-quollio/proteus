@@ -1,0 +1,21 @@
+{
+  "event_id": "evt-1",
+  "occurred_at": "2026-01-26T03:00:00Z",
+  "tenant_id": "tenant-1",
+  "case_id": "case-123",
+  "type": "EXPORT_REQUESTED",
+  "actor": {
+    "actor_type": "user",
+    "actor_hash": "<sha256>",
+    "display": "reviewer-1"
+  },
+  "details": {
+    "format": "zip",
+    "include": [
+      "artifacts",
+      "receipts",
+      "auditEvents",
+      "policySnapshots"
+    ]
+  }
+}

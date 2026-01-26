@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://proteus.example/schemas/evidence-pack/audit.event.schema.json",
+  "title": "Audit Event",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "tenant_id",
+    "case_id",
+    "type",
+    "actor"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "tenant_id": {
+      "type": "string"
+    },
+    "case_id": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string"
+    },
+    "actor": {
+      "type": "object",
+      "required": [
+        "actor_type",
+        "actor_hash"
+      ],
+      "properties": {
+        "actor_type": {
+          "type": "string",
+          "enum": [
+            "user",
+            "service_account",
+            "system"
+          ]
+        },
+        "actor_hash": {
+          "type": "string"
+        },
+        "display": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "details": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

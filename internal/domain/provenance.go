@@ -42,11 +42,15 @@ type DerivationFailure struct {
 }
 
 const (
-	DerivationFailureManifestNotFound  = "MANIFEST_NOT_FOUND"
-	DerivationFailureInputMissing      = "INPUT_MISSING"
-	DerivationFailureMultipleGenerators = "MULTIPLE_GENERATORS"
-	DerivationFailureCycleDetected     = "CYCLE_DETECTED"
-	DerivationFailureInputInvalid      = "INPUT_INVALID"
+	DerivationFailureManifestNotFound    = "MANIFEST_NOT_FOUND"
+	DerivationFailureInputMissing        = "INPUT_MISSING"
+	DerivationFailureMultipleGenerators  = "MULTIPLE_GENERATORS"
+	DerivationFailureCycleDetected       = "CYCLE_DETECTED"
+	DerivationFailureInputInvalid        = "INPUT_INVALID"
+	DerivationFailureToolMetadataMissing = "TOOL_METADATA_MISSING"
+	DerivationFailureTimeParadox         = "TIME_PARADOX"
+	DerivationFailureSignerRevoked       = "SIGNER_REVOKED"
+	DerivationFailureArtifactMissing     = "ARTIFACT_MISSING"
 )
 
 type DerivationSummary struct {

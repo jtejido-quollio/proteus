@@ -62,6 +62,7 @@ func TestComputeReplayInputsDigest_IgnoresSTHSignatureAndIssuedAt(t *testing.T) 
 			"policy":       "opa@v0",
 			"decision":     "decision@v0",
 		},
+		"revocation_epoch": int64(0),
 	}
 
 	digestA, err := ComputeReplayInputsDigestFromPayload(payload)
@@ -111,5 +112,19 @@ func TestComputeReplayInputsDigest_IgnoresSTHSignatureAndIssuedAt(t *testing.T) 
 	}
 	if digestE == digestF {
 		t.Fatalf("expected decision result changes to alter digest")
+	}
+
+	payload["revocation_epoch"] = int64(1)
+	digestG, err := ComputeReplayInputsDigestFromPayload(payload)
+	if err != nil {
+		t.Fatalf("digest G: %v", err)
+	}
+	payload["revocation_epoch"] = int64(2)
+	digestH, err := ComputeReplayInputsDigestFromPayload(payload)
+	if err != nil {
+		t.Fatalf("digest H: %v", err)
+	}
+	if digestG == digestH {
+		t.Fatalf("expected revocation_epoch changes to alter digest")
 	}
 }

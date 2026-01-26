@@ -1,0 +1,51 @@
+@startuml
+title Proteus Phase 4 — Case Management & Moderator Workflows (Services)
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+actor "Moderator / Reviewer" as Mod
+actor "Legal / Compliance" as Legal
+actor "Auditor / Regulator" as Reg
+
+rectangle "Moderator Console (React/TS)" as UI
+
+component "API Gateway" as GW
+component "Case Service" as CASE
+component "Evidence Service" as EVID
+component "Policy Service" as POL
+component "Export Service" as EXP
+component "Workflow (Temporal Wrapper)" as WF
+
+database "Case DB" as CaseDB
+database "Evidence Store" as EvidDB
+database "Policy DB" as PolDB
+cloud "Object Storage (evidence packs)" as ObjStore
+
+Mod --> UI
+Legal --> UI
+Reg --> UI
+
+UI --> GW : HTTPS (OIDC)
+GW --> CASE
+GW --> EVID
+GW --> POL
+GW --> EXP
+
+CASE --> CaseDB
+EVID --> EvidDB
+POL  --> PolDB
+EXP  --> ObjStore
+EXP  --> CaseDB : export record
+
+CASE --> WF : start/signal/query\nCaseLifecycleWorkflow
+EXP  --> WF : start/signal/query\nEvidencePackExportWorkflow
+POL  --> WF : approvals/timers (optional)
+
+WF --> CASE : activities\nappend events, enqueue, SLA
+WF --> EXP  : activities\nbuild pack, sign, store
+WF --> POL  : activities\nsnapshot policy
+
+Reg <-- EXP : download pack\n(time-bound link)
+
+@enduml

@@ -1,4 +1,0 @@
-./handlers.go
-./server.go
-./signer.go
-./server_test.go

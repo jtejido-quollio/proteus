@@ -3,7 +3,11 @@ package usecase
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
+	"strconv"
 	"time"
 
 	"proteus/internal/domain"
@@ -25,15 +29,16 @@ type VerifyReceipt struct {
 	SubjectHash         domain.Hash
 	ManifestID          string
 	TenantID            string
+	RevocationEpoch     int64
 
 	STH            *domain.STH
 	InclusionProof *domain.InclusionProof
 	Consistency    *domain.ConsistencyProof
 
-	Derivation   domain.DerivationReceipt
-	Policy       domain.PolicyReceipt
-	Decision     domain.DecisionReceipt
-	Replay       domain.ReplayReceipt
+	Derivation domain.DerivationReceipt
+	Policy     domain.PolicyReceipt
+	Decision   domain.DecisionReceipt
+	Replay     domain.ReplayReceipt
 }
 
 type ProofBundle struct {
@@ -43,14 +48,18 @@ type ProofBundle struct {
 }
 
 type VerifySignedManifest struct {
-	Keys       KeyRepository
-	LogKeys    LogKeyRepository
-	Log        TenantLog
-	Crypto     CryptoService
-	Merkle     MerkleService
-	Policy     PolicyEngine
-	Derivation DerivationService
-	Decision   DecisionEngine
+	Keys             KeyRepository
+	LogKeys          LogKeyRepository
+	Log              TenantLog
+	Crypto           CryptoService
+	Merkle           MerkleService
+	Policy           PolicyEngine
+	Derivation       DerivationService
+	Decision         DecisionEngine
+	KeyManager       domain.KeyManager
+	RevocationEpochs RevocationEpochRepository
+	Cache            VerificationCache
+	CacheTTL         time.Duration
 }
 
 func (uc *VerifySignedManifest) Execute(ctx context.Context, req VerifySignedManifestRequest) (*VerifyReceipt, error) {
@@ -72,6 +81,19 @@ func (uc *VerifySignedManifest) Execute(ctx context.Context, req VerifySignedMan
 		}
 		return nil, err
 	}
+	if key.Purpose != domain.KeyPurposeSigning {
+		return nil, domain.ErrKeyUnknown
+	}
+
+	epoch := int64(0)
+	if uc.RevocationEpochs != nil {
+		revEpoch, err := uc.RevocationEpochs.GetEpoch(ctx, env.Manifest.TenantID)
+		if err != nil {
+			return nil, err
+		}
+		epoch = revEpoch
+	}
+	cacheEnabled := uc.Cache != nil && uc.RevocationEpochs != nil
 
 	revoked, err := uc.Keys.IsRevoked(ctx, env.Manifest.TenantID, env.Signature.KID)
 	if err != nil {
@@ -85,13 +107,37 @@ func (uc *VerifySignedManifest) Execute(ctx context.Context, req VerifySignedMan
 	if err != nil {
 		return nil, err
 	}
-	if err := uc.Crypto.VerifySignature(canonical, env.Signature, key.PublicKey); err != nil {
-		return nil, domain.ErrSignatureInvalid
+	if uc.KeyManager != nil {
+		sigBytes, err := base64.StdEncoding.DecodeString(env.Signature.Value)
+		if err != nil {
+			return nil, domain.ErrSignatureInvalid
+		}
+		if err := uc.KeyManager.Verify(ctx, domain.KeyRef{
+			TenantID: env.Manifest.TenantID,
+			Purpose:  domain.KeyPurposeSigning,
+			KID:      env.Signature.KID,
+		}, canonical, sigBytes, key.PublicKey); err != nil {
+			return nil, domain.ErrSignatureInvalid
+		}
+	} else {
+		if err := uc.Crypto.VerifySignature(canonical, env.Signature, key.PublicKey); err != nil {
+			return nil, domain.ErrSignatureInvalid
+		}
 	}
 
 	leafHash, err := uc.Crypto.ComputeLeafHash(env)
 	if err != nil {
 		return nil, err
+	}
+
+	var cachedKey string
+	if cacheEnabled && req.ProofBundle != nil && len(req.Artifact) == 0 {
+		cachedKey = verificationCacheKey(env.Manifest.TenantID, leafHash, &req.ProofBundle.STH, epoch)
+		if cachedKey != "" {
+			if cached, ok, err := uc.Cache.Get(ctx, cachedKey); err == nil && ok && cached != nil {
+				return receiptFromCache(cached), nil
+			}
+		}
 	}
 
 	var artifactHashValid *bool
@@ -119,6 +165,7 @@ func (uc *VerifySignedManifest) Execute(ctx context.Context, req VerifySignedMan
 		SubjectHash:         env.Manifest.Subject.Hash,
 		ManifestID:          env.Manifest.ManifestID,
 		TenantID:            env.Manifest.TenantID,
+		RevocationEpoch:     epoch,
 	}
 
 	if req.ProofBundle != nil {
@@ -139,6 +186,9 @@ func (uc *VerifySignedManifest) Execute(ctx context.Context, req VerifySignedMan
 		}
 		if err := uc.attachDecision(receipt, policyEval, derivationSummary, verification); err != nil {
 			return nil, err
+		}
+		if cacheEnabled {
+			uc.storeCache(ctx, cachedKey, receipt)
 		}
 		return receipt, nil
 	}
@@ -169,6 +219,9 @@ func (uc *VerifySignedManifest) Execute(ctx context.Context, req VerifySignedMan
 	if err := uc.attachDecision(receipt, policyEval, derivationSummary, verification); err != nil {
 		return nil, err
 	}
+	if cacheEnabled {
+		uc.storeCache(ctx, verificationCacheKey(env.Manifest.TenantID, leafHash, receipt.STH, epoch), receipt)
+	}
 	return receipt, nil
 }
 
@@ -187,6 +240,9 @@ func (uc *VerifySignedManifest) verifyProofBundle(ctx context.Context, bundle *P
 	}
 	logKey, err := uc.LogKeys.GetActive(ctx, tenantID)
 	if err != nil {
+		return domain.ErrSTHInvalid
+	}
+	if logKey.Purpose != domain.KeyPurposeLog {
 		return domain.ErrSTHInvalid
 	}
 	if err := uc.Crypto.VerifySTHSignature(bundle.STH, bundle.STHSignature, logKey.PublicKey); err != nil {
@@ -252,7 +308,8 @@ func (uc *VerifySignedManifest) attachPolicy(ctx context.Context, receipt *Verif
 		Options: &domain.PolicyOptions{
 			RequireProof: requireProof,
 		},
-		Derivation: receipt.Derivation,
+		Derivation:      receipt.Derivation,
+		RevocationEpoch: receipt.RevocationEpoch,
 	}
 	eval, err := uc.Policy.Evaluate(ctx, input)
 	if err != nil {
@@ -290,15 +347,87 @@ func (uc *VerifySignedManifest) attachDecision(receipt *VerifyReceipt, eval *dom
 		return nil
 	}
 	result, err := uc.Decision.Evaluate(DecisionInput{
-		Verification: verification,
-		Derivation:   derivation,
-		Policy:       eval.Result,
+		Verification:    verification,
+		Derivation:      derivation,
+		Policy:          eval.Result,
+		RevocationEpoch: receipt.RevocationEpoch,
 	})
 	if err != nil {
 		return err
 	}
 	receipt.Decision = decisionReceiptFromResult(result)
 	return nil
+}
+
+func (uc *VerifySignedManifest) storeCache(ctx context.Context, key string, receipt *VerifyReceipt) {
+	if uc.Cache == nil || uc.RevocationEpochs == nil || key == "" || receipt == nil || receipt.STH == nil {
+		return
+	}
+	ttl := uc.CacheTTL
+	if err := uc.Cache.Put(ctx, key, receiptToCache(receipt), ttl); err != nil {
+		return
+	}
+}
+
+func receiptFromCache(cached *domain.VerificationResult) *VerifyReceipt {
+	if cached == nil {
+		return nil
+	}
+	return &VerifyReceipt{
+		SignatureValid:      cached.SignatureValid,
+		KeyStatus:           cached.KeyStatus,
+		RevocationCheckedAt: cached.RevocationCheckedAt,
+		LogIncluded:         cached.LogIncluded,
+		SubjectHash:         cached.SubjectHash,
+		ManifestID:          cached.ManifestID,
+		TenantID:            cached.TenantID,
+		RevocationEpoch:     cached.RevocationEpoch,
+		STH:                 cached.STH,
+		InclusionProof:      cached.InclusionProof,
+		Consistency:         cached.Consistency,
+		Derivation:          cached.Derivation,
+		Policy:              cached.Policy,
+		Decision:            cached.Decision,
+		Replay:              cached.Replay,
+	}
+}
+
+func receiptToCache(receipt *VerifyReceipt) domain.VerificationResult {
+	return domain.VerificationResult{
+		SignatureValid:      receipt.SignatureValid,
+		KeyStatus:           receipt.KeyStatus,
+		RevocationCheckedAt: receipt.RevocationCheckedAt,
+		LogIncluded:         receipt.LogIncluded,
+		SubjectHash:         receipt.SubjectHash,
+		ManifestID:          receipt.ManifestID,
+		TenantID:            receipt.TenantID,
+		RevocationEpoch:     receipt.RevocationEpoch,
+		STH:                 receipt.STH,
+		InclusionProof:      receipt.InclusionProof,
+		Consistency:         receipt.Consistency,
+		Derivation:          receipt.Derivation,
+		Policy:              receipt.Policy,
+		Decision:            receipt.Decision,
+		Replay:              receipt.Replay,
+	}
+}
+
+func verificationCacheKey(tenantID string, leafHash []byte, sth *domain.STH, epoch int64) string {
+	if tenantID == "" || len(leafHash) == 0 || sth == nil || len(sth.RootHash) == 0 {
+		return ""
+	}
+	payload := make([]byte, 0, len(tenantID)+1+len(leafHash)+64)
+	payload = append(payload, tenantID...)
+	payload = append(payload, '|')
+	payload = append(payload, []byte(hex.EncodeToString(leafHash))...)
+	payload = append(payload, '|')
+	payload = append(payload, []byte(strconv.FormatInt(sth.TreeSize, 10))...)
+	payload = append(payload, '|')
+	payload = append(payload, []byte(hex.EncodeToString(sth.RootHash))...)
+	payload = append(payload, '|')
+	payload = append(payload, []byte(strconv.FormatInt(epoch, 10))...)
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:])
 }
 
 func derivationReceiptFromSummary(summary domain.DerivationSummary) domain.DerivationReceipt {

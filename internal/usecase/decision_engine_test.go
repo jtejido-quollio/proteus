@@ -42,8 +42,8 @@ func TestDecisionEngineV0_Deterministic(t *testing.T) {
 	if !reflect.DeepEqual(first, second) {
 		t.Fatalf("expected deterministic output")
 	}
-	if first.Action != "deny" {
-		t.Fatalf("expected action deny, got %s", first.Action)
+	if first.Action != "block" {
+		t.Fatalf("expected action block, got %s", first.Action)
 	}
 	if first.Score != 100 {
 		t.Fatalf("expected score 100, got %d", first.Score)
@@ -78,6 +78,34 @@ func TestDecisionEngineV0_AllowNoReasons(t *testing.T) {
 	}
 	if len(result.Reasons) != 0 {
 		t.Fatalf("expected no reasons, got %v", result.Reasons)
+	}
+}
+
+func TestDecisionEngineV0_RequireReviewWhenDerivationIncomplete(t *testing.T) {
+	engine := &DecisionEngineV0{}
+	input := DecisionInput{
+		Verification: domain.PolicyVerification{
+			SignatureValid: true,
+			KeyStatus:      "active",
+			LogIncluded:    true,
+		},
+		Derivation: &domain.DerivationSummary{
+			Complete: false,
+		},
+		Policy: domain.PolicyResult{
+			Allow: true,
+		},
+	}
+
+	result, err := engine.Evaluate(input)
+	if err != nil {
+		t.Fatalf("evaluate decision: %v", err)
+	}
+	if result.Action != "require_review" {
+		t.Fatalf("expected action require_review, got %s", result.Action)
+	}
+	if result.Score != 50 {
+		t.Fatalf("expected score 50, got %d", result.Score)
 	}
 }
 

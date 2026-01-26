@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://proteus.example/schemas/evidence-pack/signatures.schema.json",
+  "title": "Evidence Pack Signatures",
+  "type": "object",
+  "required": [
+    "hash_alg",
+    "manifest_sha256",
+    "pack_sha256"
+  ],
+  "properties": {
+    "hash_alg": {
+      "type": "string",
+      "enum": [
+        "sha256"
+      ]
+    },
+    "manifest_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "pack_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "signed_by": {
+      "type": "object",
+      "properties": {
+        "key_id": {
+          "type": "string"
+        },
+        "alg": {
+          "type": "string"
+        },
+        "signature_base64": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

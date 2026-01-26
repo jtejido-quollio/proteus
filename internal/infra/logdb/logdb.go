@@ -13,9 +13,11 @@ import (
 )
 
 type Log struct {
-	repo    *db.TransparencyLogRepository
-	clock   func() time.Time
-	signSTH func(domain.STH) ([]byte, error)
+	repo          *db.TransparencyLogRepository
+	clock         func() time.Time
+	signSTH       func(domain.STH) ([]byte, error)
+	anchor        domain.AnchorService
+	anchorTimeout time.Duration
 }
 
 func New(repo *db.TransparencyLogRepository) *Log {
@@ -30,13 +32,19 @@ func NewWithSigner(repo *db.TransparencyLogRepository, signSTH func(domain.STH) 
 }
 
 func NewWithSignerAndClock(repo *db.TransparencyLogRepository, signSTH func(domain.STH) ([]byte, error), clock func() time.Time) *Log {
+	return NewWithSignerClockAndAnchor(repo, signSTH, clock, nil, 0)
+}
+
+func NewWithSignerClockAndAnchor(repo *db.TransparencyLogRepository, signSTH func(domain.STH) ([]byte, error), clock func() time.Time, anchorSvc domain.AnchorService, timeout time.Duration) *Log {
 	if clock == nil {
 		clock = time.Now
 	}
 	return &Log{
-		repo:    repo,
-		clock:   clock,
-		signSTH: signSTH,
+		repo:          repo,
+		clock:         clock,
+		signSTH:       signSTH,
+		anchor:        anchorSvc,
+		anchorTimeout: timeout,
 	}
 }
 
@@ -214,5 +222,19 @@ func (l *Log) buildSTH(ctx context.Context, tenantID string, treeSize int64) (*d
 		}
 		return nil, err
 	}
+	l.anchorBestEffort(ctx, tenantID, sth)
 	return &sth, nil
+}
+
+func (l *Log) anchorBestEffort(ctx context.Context, tenantID string, sth domain.STH) {
+	if l.anchor == nil {
+		return
+	}
+	timeout := l.anchorTimeout
+	if timeout <= 0 {
+		timeout = 2 * time.Second
+	}
+	anchorCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	_, _ = l.anchor.AnchorSTH(anchorCtx, tenantID, sth)
 }

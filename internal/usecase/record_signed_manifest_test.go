@@ -87,6 +87,7 @@ func TestRecordSignedManifest_VectorEnvelope(t *testing.T) {
 			env.Manifest.TenantID + ":" + env.Signature.KID: {
 				TenantID:  env.Manifest.TenantID,
 				KID:       env.Signature.KID,
+				Purpose:   domain.KeyPurposeSigning,
 				Alg:       keys.Alg,
 				PublicKey: pubKey,
 				Status:    domain.KeyStatusActive,
@@ -153,6 +154,7 @@ func TestRecordSignedManifest_Idempotent(t *testing.T) {
 			env.Manifest.TenantID + ":" + env.Signature.KID: {
 				TenantID:  env.Manifest.TenantID,
 				KID:       env.Signature.KID,
+				Purpose:   domain.KeyPurposeSigning,
 				Alg:       keys.Alg,
 				PublicKey: pubKey,
 				Status:    domain.KeyStatusActive,

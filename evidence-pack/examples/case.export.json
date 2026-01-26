@@ -1,0 +1,29 @@
+{
+  "case_id": "case-123",
+  "tenant_id": "tenant-1",
+  "status": "RESOLVED",
+  "opened_at": "2026-01-26T03:00:00Z",
+  "question": "Was the AI-generated report authentic, policy-compliant, and untampered at the time of publication?",
+  "scope": {
+    "artifacts": [
+      "artifact:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ]
+  },
+  "holds": [
+    {
+      "hold_id": "hold-1",
+      "type": "legal_hold",
+      "placed_at": "2026-01-26T03:00:00Z",
+      "rationale": "Litigation hold"
+    }
+  ],
+  "outcomes": [
+    {
+      "outcome_id": "out-1",
+      "decided_at": "2026-01-26T03:00:00Z",
+      "decision": "authentic",
+      "justification": "Receipt verifies signature and inclusion proof; policy snapshot v12 applies.",
+      "policy_snapshot_ref": "policy-snap-12"
+    }
+  ]
+}

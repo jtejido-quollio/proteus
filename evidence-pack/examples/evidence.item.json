@@ -1,0 +1,18 @@
+{
+  "evidence_id": "ev-1",
+  "tenant_id": "tenant-1",
+  "case_id": "case-123",
+  "kind": "verification_receipt",
+  "created_at": "2026-01-26T03:00:00Z",
+  "label": "Verify receipt",
+  "references": [
+    {
+      "type": "receipt_verify",
+      "ref": "receipts/verify/rcpt-1.json"
+    }
+  ],
+  "pack_paths": {
+    "metadata": "evidence/items/ev-1.json",
+    "blobs": []
+  }
+}
