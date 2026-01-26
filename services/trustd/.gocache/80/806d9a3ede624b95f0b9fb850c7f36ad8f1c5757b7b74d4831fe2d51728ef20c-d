@@ -1,5 +1,0 @@
-./manager.go
-./path.go
-./store.go
-./manager_integration_test.go
-./manager_test.go

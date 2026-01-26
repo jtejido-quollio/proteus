@@ -1,8 +1,0 @@
-./bundle.go
-./file.go
-./filefs.go
-./hash.go
-./keys.go
-./sign.go
-./store.go
-./verify.go

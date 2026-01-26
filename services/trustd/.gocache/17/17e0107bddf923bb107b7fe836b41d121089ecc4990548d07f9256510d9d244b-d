@@ -1,7 +1,0 @@
-./ecdsa.go
-./headers.go
-./interface.go
-./jwk.go
-./key_ops.go
-./rsa.go
-./symmetric.go
