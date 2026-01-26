@@ -1,5 +1,0 @@
-# test log
-open rekor
-open rekor/rekor.go
-open blockchain
-open blockchain/provider.go

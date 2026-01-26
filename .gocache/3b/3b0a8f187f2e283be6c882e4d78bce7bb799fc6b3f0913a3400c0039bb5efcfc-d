@@ -1,4 +1,0 @@
-./authenticator.go
-./jwks_cache.go
-./authenticator_test.go
-./jwks_cache_test.go

@@ -1,6 +1,0 @@
-./capture.go
-./keys.go
-./manifest.go
-./marshal.go
-./sign.go
-./verify.go

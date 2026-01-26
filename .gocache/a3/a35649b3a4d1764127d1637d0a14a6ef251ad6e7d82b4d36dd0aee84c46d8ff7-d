@@ -1,6 +1,0 @@
-./control.go
-./instruction.go
-./memory.go
-./numeric.go
-./parametric.go
-./variable.go

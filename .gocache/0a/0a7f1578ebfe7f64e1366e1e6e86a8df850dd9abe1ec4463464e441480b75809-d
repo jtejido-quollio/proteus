@@ -1,5 +1,0 @@
-./auth.go
-./handlers.go
-./ratelimit.go
-./server.go
-./signer.go

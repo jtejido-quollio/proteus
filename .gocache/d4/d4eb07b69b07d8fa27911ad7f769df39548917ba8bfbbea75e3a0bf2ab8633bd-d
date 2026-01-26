@@ -1,6 +1,0 @@
-./handlers.go
-./server.go
-./signer.go
-./e2e_integration_test.go
-./server_test.go
-./signer_test.go

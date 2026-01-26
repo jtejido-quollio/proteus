@@ -1,7 +1,0 @@
-./auth.go
-./handlers.go
-./server.go
-./signer.go
-./auth_test_helpers_test.go
-./server_test.go
-./signer_test.go
