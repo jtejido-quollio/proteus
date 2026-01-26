@@ -335,7 +335,7 @@ Only do this once the cryptographic core is adopted.
 
 **Definition of Done**
 
-* `docs/v4b_spec.md` contains:
+* `services/case-service/docs/v4b_spec.md` contains:
   * state machine
   * event types
   * invariants (“no mutation of evidence”, “all decisions are events”)
@@ -346,7 +346,7 @@ Only do this once the cryptographic core is adopted.
 ##### Codex prompts (Phase 4B.0)
 **Prompt 4B0-A — Spec + state machine**
 
-Create docs/v4b_spec.md defining Case Management domain: entities, invariants, lifecycle state machine, required event types, and idempotency rules. Include explicit non-goals to avoid dashboard bloat. Provide OpenAPI endpoint list (no implementation yet).
+Create services/case-service/docs/v4b_spec.md defining Case Management domain: entities, invariants, lifecycle state machine, required event types, and idempotency rules. Include explicit non-goals to avoid dashboard bloat. Provide OpenAPI endpoint list (no implementation yet).
 
 **Prompt 4B0-B — DB schema + migrations**
 
@@ -380,13 +380,13 @@ Implement Gin HTTP API for cases:
 * GET /v1/cases (filters: tenant_id, status, queue_id, owner, severity, sla_state, time ranges)
 * POST /v1/cases/:id/evidence (attach links to artifacts/receipts/derivation/policy decisions)
 * GET /v1/cases/:id/events
-  * Use consistent error codes, request validation, and RBAC checks.
+Use consistent error codes, request validation, and RBAC checks.
 
 **Prompt 4B1-C — Queue views + indexing**
 
 Add endpoints for reviewer queue views:
 * GET /v1/queues/:queue_id/cases
-  * Implement DB indexes and query plans for high-cardinality tenants. Ensure pagination uses stable cursor (created_at + id). Add tests.
+Implement DB indexes and query plans for high-cardinality tenants. Ensure pagination uses stable cursor (created_at + id). Add tests.
 
 #### Phase 4B.2 — Workflow Service (Temporal Wrapper) (4–6 weeks)
 **Outcomes**

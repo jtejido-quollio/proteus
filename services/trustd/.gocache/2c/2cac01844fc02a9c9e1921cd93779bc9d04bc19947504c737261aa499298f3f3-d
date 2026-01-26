@@ -1,0 +1,7 @@
+./bundle_verify.go
+./capture_cmd.go
+./cli.go
+./main.go
+./manifest_cmd.go
+./output.go
+./verify_cmd.go

@@ -63,7 +63,7 @@ You can run the server without a database connection. If `POSTGRES_DSN` is not s
 ### 2) Run
 ```bash
 go mod tidy
-go run ./cmd/trustd
+go run ./services/trustd/cmd/trustd
 ```
 
 ### Environment

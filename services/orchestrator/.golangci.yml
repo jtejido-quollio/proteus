@@ -1,0 +1,18 @@
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - depguard
+
+linters-settings:
+  depguard:
+    rules:
+      orchestrator:
+        files:
+          - "**/*.go"
+        deny:
+          - pkg: "proteus/case-service/internal"
+            desc: "orchestrator must not import case-service internal packages"
+          - pkg: "proteus/case-service"
+            desc: "orchestrator must use API clients, not domain services"

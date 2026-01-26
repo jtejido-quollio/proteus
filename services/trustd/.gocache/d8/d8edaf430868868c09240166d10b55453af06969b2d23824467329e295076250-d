@@ -1,0 +1,4 @@
+# test log
+open ../../testvectors/v0/manifest_1.json
+open ../../testvectors/v0/keys.json
+open ../../testvectors/v0/signature_1.b64

@@ -1,27 +1,27 @@
 # Keycloak (local dev)
 
-Issuer is pinned to `http://keycloak:8080/realms/proteus` in `docker-compose.yml`.
+Issuer is pinned to `http://keycloak:8080/realms/proteus` in `infra/compose/docker-compose.yml`.
 
 Recommended (deterministic issuer): mint tokens inside the compose network so `iss` matches `http://keycloak:8080/realms/proteus`.
 
 If you changed `realm.json`, reset the Keycloak volume so the realm is re-imported:
 
 ```sh
-podman compose down -v
-podman compose up -d keycloak
+podman compose -f infra/compose/docker-compose.yml down -v
+podman compose -f infra/compose/docker-compose.yml up -d keycloak
 ```
 
 Issuer check:
 
 ```sh
-podman compose exec keycloak \
+podman compose -f infra/compose/docker-compose.yml exec keycloak \
   curl -s http://keycloak:8080/realms/proteus/.well-known/openid-configuration | jq -r .issuer
 ```
 
 Token mint (client credentials):
 
 ```sh
-TOKEN=$(podman compose exec keycloak sh -lc 'curl -s \
+TOKEN=$(podman compose -f infra/compose/docker-compose.yml exec keycloak sh -lc 'curl -s \
   -d "client_id=proteus-api" \
   -d "client_secret=proteus-secret" \
   -d "grant_type=client_credentials" \
@@ -52,8 +52,8 @@ curl -s \
 Expected: HTTP 200 with a receipt payload. If you get `SIGNATURE_INVALID`, re-import the realm and reset the DB:
 
 ```sh
-podman compose down -v
-podman compose up -d
+podman compose -f infra/compose/docker-compose.yml down -v
+podman compose -f infra/compose/docker-compose.yml up -d
 ```
 
 ## Security notes

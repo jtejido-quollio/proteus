@@ -26,24 +26,14 @@ proteus/
       vite.config.ts
   services/
     gateway/                     # API Gateway (authn/z, tenancy, rate limits, request IDs)
+    trustd/                      # Core Trustd API (record/verify, log, provenance)
     case-service/                # Cases, queues, SLA, assignments, human actions
+    orchestrator/                # Temporal worker (not a domain service)
     evidence-service/            # Derivation graphs + immutable receipts lookup
     policy-service/              # Policy bundles, versions, approvals, audits
     export-service/              # Evidence pack generation, signing, retention
     notification-service/        # optional (Phase 4C)
-  workflow/
-    temporal/                    # Wrapper around Temporal
-      worker/
-      workflows/
-      activities/
-      signals/
-      queries/
-      sdk/
-      cmd/worker/
-  packages/
-    openapi/                     # versioned OpenAPI specs
-    shared-ts/                   # shared types, zod schemas, generated clients
-    shared-go/                   # shared libs (claims, middleware, tracing, errors)
+  api/                           # versioned OpenAPI specs
   infra/
     compose/
     k8s/
